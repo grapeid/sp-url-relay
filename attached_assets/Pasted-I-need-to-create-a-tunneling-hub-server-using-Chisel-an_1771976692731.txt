@@ -1,0 +1,10 @@
+I need to create a tunneling hub server using Chisel and Caddy. Please set up a generic Go project on Replit that does the following:
+
+1.  **Install Dependencies:** Download and build `chisel` (github.com/jpillora/chisel). Also download the static binary for `caddy` (caddyserver.com).
+2.  **Run Chisel Server:** Create a script to run `chisel server --auth secret-token --port 8080 --reverse`. This will accept incoming WebSocket tunnels from mobile devices on port 8080.
+3.  **Configure Caddyfile:** Create a dynamic `Caddyfile` configuration. I want to route traffic from public paths (like `/alice/*`) down into specific ports that the mobile devices open via Chisel. For example, if a mobile device connects to chisel and opens a reverse port on `10042`, Caddy should reverse_proxy `/alice/*` requests to `localhost:10042`. 
+    - Critical Configuration: Caddy should accept requests from any domain (e.g. GrapeID.com or user-provided custom domains like myagent.com) by listening generically, rather than binding to a single domain name, allowing automatic HTTPS generation via On-Demand TLS if configured safely, or standard TLS for pre-configured hostnames.
+4.  **API to claim names and check availability:** Create a tiny Go HTTP API running alongside Caddy (maybe on port 3000). It needs two main routes:
+    - `GET /check-name?name=alice`: Checks a local database or tracking map to see if "alice" is already in use. Returns `{available: false}` if in use, or `{available: true}`.
+    - `POST /claim-name`: When a user sends a chosen name (e.g., {"name": "alice"}), verify it's not taken. If available, find a free local port (like 10042), record the name as taken in your tracking map/DB, dynamically update the Caddy routing configuration (either via Caddy's admin API or by rewriting the Caddyfile and reloading), and return the allocated port number back to the user.
+5.  **Expose:** Bind Caddy to `0.0.0.0:80` (or whatever Replit's default public port expects for direct web traffic) so it can receive public incoming web requests.
