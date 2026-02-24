@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -12,64 +13,176 @@ import (
 	"strings"
 	"sync"
 	"text/template"
+	"time"
+
+	_ "github.com/lib/pq"
 )
 
-type NameEntry struct {
-	Name string `json:"name"`
-	Port int    `json:"port"`
-}
-
 type Registry struct {
-	mu      sync.RWMutex
-	names   map[string]int
-	nextPort int
+	db       *sql.DB
+	mu       sync.Mutex
+	cache    map[string]int
 }
 
-func NewRegistry() *Registry {
-	return &Registry{
-		names:    make(map[string]int),
-		nextPort: 10042,
+func NewRegistry(db *sql.DB) (*Registry, error) {
+	r := &Registry{
+		db:    db,
+		cache: make(map[string]int),
 	}
+	if err := r.loadFromDB(); err != nil {
+		return nil, fmt.Errorf("failed to load existing names: %w", err)
+	}
+	return r, nil
 }
 
-func (r *Registry) IsAvailable(name string) bool {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	_, exists := r.names[name]
-	return !exists
+func (r *Registry) loadFromDB() error {
+	rows, err := r.db.Query("SELECT name, port FROM claimed_names ORDER BY id")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var name string
+		var port int
+		if err := rows.Scan(&name, &port); err != nil {
+			return err
+		}
+		r.cache[name] = port
+	}
+	log.Printf("Loaded %d existing name(s) from database", len(r.cache))
+	return rows.Err()
 }
 
-func (r *Registry) Claim(name string) (int, bool) {
+func (r *Registry) IsAvailable(name string) (bool, error) {
+	var count int
+	err := r.db.QueryRow("SELECT COUNT(*) FROM claimed_names WHERE name = $1", name).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count == 0, nil
+}
+
+func (r *Registry) Claim(name string) (int, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, exists := r.names[name]; exists {
-		return 0, false
+
+	var count int
+	err := r.db.QueryRow("SELECT COUNT(*) FROM claimed_names WHERE name = $1", name).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("db check failed: %w", err)
 	}
+	if count > 0 {
+		return 0, nil
+	}
+
 	port := r.findFreePort()
-	r.names[name] = port
-	return port, true
+
+	_, err = r.db.Exec(
+		"INSERT INTO claimed_names (name, port) VALUES ($1, $2)",
+		name, port,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("db insert failed: %w", err)
+	}
+
+	r.cache[name] = port
+	return port, nil
 }
 
 func (r *Registry) GetAll() map[string]int {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	result := make(map[string]int)
-	for k, v := range r.names {
+	for k, v := range r.cache {
 		result[k] = v
 	}
 	return result
 }
 
 func (r *Registry) findFreePort() int {
-	for {
-		port := r.nextPort
-		r.nextPort++
+	maxPort := 10042
+	for _, p := range r.cache {
+		if p >= maxPort {
+			maxPort = p + 1
+		}
+	}
+	for port := maxPort; ; port++ {
 		ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 		if err == nil {
 			ln.Close()
 			return port
 		}
 	}
+}
+
+type RateLimiter struct {
+	mu       sync.Mutex
+	visitors map[string]*visitor
+}
+
+type visitor struct {
+	tokens    float64
+	lastSeen  time.Time
+}
+
+func NewRateLimiter() *RateLimiter {
+	rl := &RateLimiter{
+		visitors: make(map[string]*visitor),
+	}
+	go rl.cleanup()
+	return rl
+}
+
+func (rl *RateLimiter) Allow(ip string, maxTokens float64, refillRate float64) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	v, exists := rl.visitors[ip]
+	now := time.Now()
+
+	if !exists {
+		rl.visitors[ip] = &visitor{tokens: maxTokens - 1, lastSeen: now}
+		return true
+	}
+
+	elapsed := now.Sub(v.lastSeen).Seconds()
+	v.tokens += elapsed * refillRate
+	if v.tokens > maxTokens {
+		v.tokens = maxTokens
+	}
+	v.lastSeen = now
+
+	if v.tokens < 1 {
+		return false
+	}
+	v.tokens--
+	return true
+}
+
+func (rl *RateLimiter) cleanup() {
+	for {
+		time.Sleep(5 * time.Minute)
+		rl.mu.Lock()
+		for ip, v := range rl.visitors {
+			if time.Since(v.lastSeen) > 10*time.Minute {
+				delete(rl.visitors, ip)
+			}
+		}
+		rl.mu.Unlock()
+	}
+}
+
+func getClientIP(r *http.Request) string {
+	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
+		parts := strings.Split(forwarded, ",")
+		return strings.TrimSpace(parts[0])
+	}
+	if realIP := r.Header.Get("X-Real-IP"); realIP != "" {
+		return realIP
+	}
+	host, _, _ := net.SplitHostPort(r.RemoteAddr)
+	return host
 }
 
 var namePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$`)
@@ -128,17 +241,60 @@ func reloadCaddy() error {
 }
 
 func main() {
-	registry := NewRegistry()
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		log.Fatal("DATABASE_URL environment variable is not set")
+	}
+
+	db, err := sql.Open("postgres", dbURL)
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
+	defer db.Close()
+
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(5 * time.Minute)
+
+	if err := db.Ping(); err != nil {
+		log.Fatalf("Failed to ping database: %v", err)
+	}
+	log.Println("Connected to PostgreSQL database")
+
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS claimed_names (
+			id SERIAL PRIMARY KEY,
+			name VARCHAR(63) UNIQUE NOT NULL,
+			port INTEGER NOT NULL,
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+		)
+	`)
+	if err != nil {
+		log.Fatalf("Failed to ensure schema: %v", err)
+	}
+
+	registry, err := NewRegistry(db)
+	if err != nil {
+		log.Fatalf("Failed to initialize registry: %v", err)
+	}
 
 	if err := generateCaddyfile(registry.GetAll()); err != nil {
 		log.Fatalf("Failed to generate initial Caddyfile: %v", err)
 	}
-	log.Println("Initial Caddyfile generated")
+	log.Println("Initial Caddyfile generated with persisted routes")
 
+	limiter := NewRateLimiter()
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/check-name", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+
+		ip := getClientIP(r)
+		if !limiter.Allow(ip, 30, 5) {
+			w.WriteHeader(http.StatusTooManyRequests)
+			json.NewEncoder(w).Encode(map[string]string{"error": "rate limit exceeded, try again shortly"})
+			return
+		}
 
 		name := r.URL.Query().Get("name")
 		if name == "" {
@@ -154,12 +310,25 @@ func main() {
 			return
 		}
 
-		available := registry.IsAvailable(name)
+		available, err := registry.IsAvailable(name)
+		if err != nil {
+			log.Printf("DB error checking name '%s': %v", name, err)
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": "internal error"})
+			return
+		}
 		json.NewEncoder(w).Encode(map[string]bool{"available": available})
 	})
 
 	mux.HandleFunc("/claim-name", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+
+		ip := getClientIP(r)
+		if !limiter.Allow(ip, 10, 1) {
+			w.WriteHeader(http.StatusTooManyRequests)
+			json.NewEncoder(w).Encode(map[string]string{"error": "rate limit exceeded, try again shortly"})
+			return
+		}
 
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -183,8 +352,14 @@ func main() {
 			return
 		}
 
-		port, ok := registry.Claim(req.Name)
-		if !ok {
+		port, err := registry.Claim(req.Name)
+		if err != nil {
+			log.Printf("DB error claiming name '%s': %v", req.Name, err)
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": "internal error"})
+			return
+		}
+		if port == 0 {
 			w.WriteHeader(http.StatusConflict)
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"available": false,
@@ -214,6 +389,14 @@ func main() {
 
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+
+		ip := getClientIP(r)
+		if !limiter.Allow(ip, 30, 5) {
+			w.WriteHeader(http.StatusTooManyRequests)
+			json.NewEncoder(w).Encode(map[string]string{"error": "rate limit exceeded, try again shortly"})
+			return
+		}
+
 		routes := registry.GetAll()
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"active_routes": routes,

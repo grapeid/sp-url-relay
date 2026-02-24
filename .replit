@@ -1,4 +1,4 @@
-modules = ["go-1.25"]
+modules = ["go-1.25", "postgresql-16"]
 [agent]
 expertMode = true
 
@@ -41,3 +41,6 @@ externalPort = 8080
 [[ports]]
 localPort = 10042
 externalPort = 3001
+
+[nix]
+channel = "stable-25_05"
