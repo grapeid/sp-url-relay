@@ -44,3 +44,8 @@ externalPort = 3001
 
 [nix]
 channel = "stable-25_05"
+
+[deployment]
+deploymentTarget = "vm"
+run = ["bash", "scripts/start.sh"]
+build = ["bash", "-c", "bash scripts/install.sh && go build -o bin/api ./cmd/api"]
