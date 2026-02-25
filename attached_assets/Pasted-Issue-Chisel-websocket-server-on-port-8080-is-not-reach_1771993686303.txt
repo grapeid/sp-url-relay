@@ -1,0 +1,23 @@
+Issue: Chisel websocket server on port 8080 is not reachable from external clients.
+
+When clients try to connect to wss://grapeid.org:8080, they get dial tcp 34.111.179.208:8080: i/o timeout. The /claim-name and /check-name HTTP APIs on port 443 work correctly, but the Chisel server that handles the actual reverse proxy tunneling on port 8080 is unreachable.
+
+What needs to be fixed:
+
+Verify the Chisel server process is running — Check that the Chisel server is actually started and listening on port 8080. You can verify with ss -tlnp | grep 8080 or netstat -tlnp | grep 8080.
+
+Ensure port 8080 is exposed in the Replit workflow — The Replit environment needs to expose port 8080 externally, not just port 443/HTTPS. Check that the workflow or deployment configuration exposes port 8080 for websocket connections. In the Replit deployment settings, the Chisel server port (8080) needs to be publicly accessible alongside the main HTTP API port.
+
+Check if Replit's proxy/load balancer is blocking port 8080 — Replit's infrastructure may only route traffic to the primary port. If so, consider running the Chisel server on the same port as the HTTP API and using path-based routing to distinguish Chisel websocket upgrades from regular HTTP API calls. The Chisel server supports being mounted behind a reverse proxy — you could run it on the same port and let Caddy route /chisel or websocket upgrade requests to the Chisel handler.
+
+Test the connection — Once fixed, verify with:
+
+curl -sv --max-time 10 https://grapeid.org:8080/
+A working Chisel server should respond (likely with a websocket upgrade prompt or an HTTP response, not a timeout).
+
+Client connection details for reference:
+
+Chisel client connects to: https://grapeid.org:8080 (chisel internally upgrades to wss://)
+Auth credentials: user:secret-token (default)
+Remote spec: R:<allocated_port>:localhost:<local_port> (reverse tunnel)
+The claim-name API returns the allocated port, which the client uses in the remote spec

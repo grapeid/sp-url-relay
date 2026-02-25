@@ -74,7 +74,8 @@ Content-Type: application/json
 {
   "name": "alice",
   "port": 10042,
-  "message": "Name 'alice' claimed. Connect chisel reverse tunnel to port 10042. Traffic at /alice/* will be forwarded."
+  "tunnel_path": "/tunnel",
+  "message": "Name 'alice' claimed. Connect chisel client to the server's /tunnel path with remote R:10042:<local-addr>. Traffic at /alice/* will be forwarded."
 }
 ```
 
@@ -127,22 +128,24 @@ Download the appropriate Chisel binary for your device from [github.com/jpillora
 
 ### Step 2: Connect the Tunnel
 
-Run the Chisel client on the device, pointing it at the server:
+Run the Chisel client on the device, pointing it at the server's `/tunnel` path:
 
 ```bash
-chisel client --auth user:secret-token https://your-server.replit.app:8080 R:<allocated-port>:<local-address>
+chisel client --auth user:secret-token https://your-server.replit.app/tunnel R:<allocated-port>:<local-address>
 ```
 
 **Example:** If you claimed the name "alice" and received port `10042`, and your local service runs on port `3000`:
 
 ```bash
-chisel client --auth user:secret-token https://your-server.replit.app:8080 R:10042:localhost:3000
+chisel client --auth user:secret-token https://your-server.replit.app/tunnel R:10042:localhost:3000
 ```
 
 This tells Chisel:
-- Connect to the server at port 8080
+- Connect to the server via the `/tunnel` path (WebSocket upgrade handled by Caddy)
 - Authenticate with `user:secret-token`
 - Reverse-forward port `10042` on the server to `localhost:3000` on the device
+
+**Important:** The Chisel server is accessible only through the `/tunnel` path on port 443 (HTTPS). It is **not** available on a separate port (e.g., 8080) from outside the server. Caddy reverse-proxies WebSocket connections from `/tunnel` to the internal Chisel server.
 
 ### Step 3: Verify
 
@@ -175,7 +178,7 @@ curl -X POST https://your-server.replit.app/claim-name \
 # (this depends on your app — could be Flask, Express, etc.)
 
 # 4. Connect chisel tunnel
-chisel client --auth user:secret-token https://your-server.replit.app:8080 R:10044:localhost:8000
+chisel client --auth user:secret-token https://your-server.replit.app/tunnel R:10044:localhost:8000
 
 # 5. Now anyone can access the device at:
 #    https://your-server.replit.app/myphone/
@@ -215,32 +218,28 @@ All claimed names and their port allocations are stored in a PostgreSQL database
                               │
                               ▼
                     ┌─────────────────┐
-                    │   Caddy (:5000) │  ← Receives all public HTTP traffic
+                    │   Caddy (:5000) │  ← Receives all public HTTP/WS traffic
                     │  Reverse Proxy  │
                     └────────┬────────┘
                              │
-              ┌──────────────┼──────────────┐
-              │              │              │
-              ▼              ▼              ▼
-     /alice/* → :10042   /bob/* → :10043   /check-name → :3000
-              │              │              /claim-name → :3000
-              │              │              /status     → :3000
-              │              │
-              │              │         ┌──────────────────┐
-              │              │         │  Go API (:3000)  │
-              │              │         │  Name Registry   │
-              │              │         │  + PostgreSQL    │
-              │              │         └──────────────────┘
-              │              │
-     ┌────────┴────────┐     │
-     │ Chisel (:8080)  │◄────┘
-     │ Tunnel Server   │
-     └────┬───────┬────┘
-          │       │
-    ┌─────┘       └─────┐
-    ▼                   ▼
- Device A            Device B
- (alice)              (bob)
+        ┌────────────────────┼────────────────────┐
+        │                    │                    │
+        ▼                    ▼                    ▼
+  /tunnel → :8080      /alice/* → :10042    /check-name → :3000
+  (WebSocket)          /bob/*   → :10043    /claim-name → :3000
+        │                    │              /status     → :3000
+        │                    │                    │
+        ▼                    │         ┌──────────┴───────┐
+  ┌────────────┐             │         │  Go API (:3000)  │
+  │  Chisel    │◄────────────┘         │  Name Registry   │
+  │  (:8080)   │                       │  + PostgreSQL    │
+  │  internal  │                       └──────────────────┘
+  └──┬─────┬───┘
+     │     │
+   ┌─┘     └─┐
+   ▼         ▼
+Device A   Device B
+(alice)     (bob)
 ```
 
 ---
@@ -250,7 +249,7 @@ All claimed names and their port allocations are stored in a PostgreSQL database
 | Component | Port | Purpose |
 |---|---|---|
 | Caddy | 5000 | Public-facing reverse proxy, routes traffic by path |
-| Chisel | 8080 | WebSocket tunnel server, accepts device connections |
+| Chisel | 8080 (internal) | WebSocket tunnel server, accessible externally via `/tunnel` path through Caddy |
 | Go API | 3000 | Name registration, port allocation, Caddy config management |
 | PostgreSQL | 5432 | Persistent storage for claimed names and ports |
 | Caddy Admin | 2019 | Internal admin API for config reloads (localhost only) |
@@ -259,7 +258,7 @@ All claimed names and their port allocations are stored in a PostgreSQL database
 
 ## Authentication
 
-- **Chisel tunnels** use `user:secret-token` for authentication. Only devices with this credential can establish tunnels.
+- **Chisel tunnels** use `user:secret-token` for authentication. Only devices with this credential can establish tunnels. Clients connect via `https://your-server.example.com/tunnel`.
 - **API endpoints** (`/check-name`, `/claim-name`, `/status`) are currently open (no authentication required). Rate limiting provides basic abuse protection.
 
 ---
