@@ -5,8 +5,12 @@ echo "=== Tunneling Hub Server ==="
 
 bash scripts/install.sh
 
-echo "Building API server..."
-go build -o bin/api ./cmd/api
+if [ ! -f bin/api ]; then
+    echo "Building API server..."
+    CGO_ENABLED=0 go build -o bin/api ./cmd/api
+else
+    echo "API server binary found (pre-built)."
+fi
 
 echo "Starting API server on port 3000..."
 ./bin/api &

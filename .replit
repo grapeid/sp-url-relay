@@ -48,4 +48,4 @@ channel = "stable-25_05"
 [deployment]
 deploymentTarget = "vm"
 run = ["bash", "scripts/start.sh"]
-build = ["bash", "-c", "bash scripts/install.sh && go build -o bin/api ./cmd/api"]
+build = ["bash", "-c", "bash scripts/install.sh && CGO_ENABLED=0 go build -o bin/api ./cmd/api"]
