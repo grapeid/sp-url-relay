@@ -2,7 +2,6 @@
 set -e
 
 CHISEL_VERSION="1.10.1"
-CADDY_VERSION="2.9.1"
 BIN_DIR="./bin"
 
 mkdir -p "$BIN_DIR"
@@ -16,17 +15,6 @@ if [ ! -f "$BIN_DIR/chisel" ]; then
     echo "Chisel installed."
 else
     echo "Chisel already installed."
-fi
-
-if [ ! -f "$BIN_DIR/caddy" ]; then
-    echo "Downloading caddy v${CADDY_VERSION}..."
-    curl -sL "https://github.com/caddyserver/caddy/releases/download/v${CADDY_VERSION}/caddy_${CADDY_VERSION}_linux_amd64.tar.gz" -o /tmp/caddy.tar.gz
-    tar -xzf /tmp/caddy.tar.gz -C /tmp caddy
-    mv /tmp/caddy "$BIN_DIR/caddy"
-    chmod +x "$BIN_DIR/caddy"
-    echo "Caddy installed."
-else
-    echo "Caddy already installed."
 fi
 
 echo "All dependencies installed."

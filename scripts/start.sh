@@ -12,7 +12,7 @@ else
     echo "API server binary found (pre-built)."
 fi
 
-echo "Starting API server on port 3000..."
+echo "Starting API server on port 5000..."
 ./bin/api &
 API_PID=$!
 sleep 1
@@ -23,11 +23,10 @@ CHISEL_PID=$!
 
 echo ""
 echo "=== All services started ==="
-echo "  API server:    port 3000 (internal)"
+echo "  API server:    port 5000 (public, handles routing)"
 echo "  Chisel server: port 8080 (tunnel endpoint)"
-echo "  Caddy proxy:   port 5000 (public, managed by API)"
 echo ""
-echo "API endpoints (via Caddy on port 5000):"
+echo "API endpoints (on port 5000):"
 echo "  GET  /check-name?name=alice"
 echo "  POST /claim-name  {\"name\": \"alice\"}"
 echo "  GET  /status"

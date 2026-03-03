@@ -8,14 +8,14 @@ import (
         "log"
         "net"
         "net/http"
+        "net/http/httputil"
+        "net/url"
         "os"
-        "os/exec"
         "os/signal"
         "regexp"
         "strings"
         "sync"
         "syscall"
-        "text/template"
         "time"
 
         _ "github.com/lib/pq"
@@ -28,7 +28,7 @@ type nameEntry struct {
 
 type Registry struct {
         db    *sql.DB
-        mu    sync.Mutex
+        mu    sync.RWMutex
         cache map[string]nameEntry
 }
 
@@ -100,8 +100,8 @@ func (r *Registry) Claim(name string, aid string) (int, error) {
 }
 
 type ReconnectResult struct {
-        Port    int
-        Status  string
+        Port   int
+        Status string
 }
 
 func (r *Registry) Reconnect(name string, aid string) (ReconnectResult, error) {
@@ -181,13 +181,23 @@ func (r *Registry) Release(name string, aid string) (ReleaseResult, error) {
 }
 
 func (r *Registry) GetAll() map[string]int {
-        r.mu.Lock()
-        defer r.mu.Unlock()
+        r.mu.RLock()
+        defer r.mu.RUnlock()
         result := make(map[string]int)
         for k, v := range r.cache {
                 result[k] = v.Port
         }
         return result
+}
+
+func (r *Registry) LookupPort(name string) (int, bool) {
+        r.mu.RLock()
+        defer r.mu.RUnlock()
+        entry, ok := r.cache[name]
+        if !ok {
+                return 0, false
+        }
+        return entry.Port, true
 }
 
 func (r *Registry) findFreePort() int {
@@ -277,132 +287,56 @@ func getClientIP(r *http.Request) string {
 
 var namePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$`)
 
-var caddyfileTmpl = template.Must(template.New("caddyfile").Parse(`{
-        auto_https off
-        admin localhost:2019
-        grace_period 5s
-}
-
-:5000 {
-        handle_path /tunnel/* {
-                reverse_proxy localhost:8080 {
-                        header_up X-Forwarded-Proto {http.request.scheme}
+func newTunnelProxy() *httputil.ReverseProxy {
+        target, _ := url.Parse("http://localhost:8080")
+        proxy := httputil.NewSingleHostReverseProxy(target)
+        originalDirector := proxy.Director
+        proxy.Director = func(req *http.Request) {
+                originalDirector(req)
+                req.URL.Path = strings.TrimPrefix(req.URL.Path, "/tunnel")
+                if req.URL.Path == "" {
+                        req.URL.Path = "/"
                 }
+                req.Host = target.Host
         }
-        handle /tunnel {
-                reverse_proxy localhost:8080 {
-                        header_up X-Forwarded-Proto {http.request.scheme}
+        proxy.FlushInterval = -1
+        return proxy
+}
+
+func newNameProxy(registry *Registry) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+                parts := strings.SplitN(r.URL.Path, "/", 3)
+                if len(parts) < 2 || parts[1] == "" {
+                        http.NotFound(w, r)
+                        return
                 }
-        }
+                name := parts[1]
 
-        {{- range $name, $port := .Routes }}
-        handle_path /{{ $name }}/* {
-                reverse_proxy localhost:{{ $port }}
-        }
-        {{- end }}
-
-        handle /check-name {
-                reverse_proxy localhost:3000
-        }
-        handle /claim-name {
-                reverse_proxy localhost:3000
-        }
-        handle /reconnect {
-                reverse_proxy localhost:3000
-        }
-        handle /release-name {
-                reverse_proxy localhost:3000
-        }
-        handle /status {
-                reverse_proxy localhost:3000
-        }
-
-        handle {
-                respond "Tunneling Hub is running. Use /check-name?name=xxx or POST /claim-name to get started." 200
-        }
-}
-`))
-
-func generateCaddyfile(routes map[string]int) error {
-        f, err := os.Create("Caddyfile")
-        if err != nil {
-                return fmt.Errorf("failed to create Caddyfile: %w", err)
-        }
-        defer f.Close()
-
-        data := struct {
-                Routes map[string]int
-        }{
-                Routes: routes,
-        }
-        return caddyfileTmpl.Execute(f, data)
-}
-
-var (
-        caddyCmd *exec.Cmd
-        caddyMu  sync.Mutex
-)
-
-func startCaddyLocked() error {
-        cmd := exec.Command("./bin/caddy", "run", "--config", "Caddyfile")
-        cmd.Stdout = os.Stdout
-        cmd.Stderr = os.Stderr
-        cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
-        if err := cmd.Start(); err != nil {
-                return fmt.Errorf("failed to start caddy: %w", err)
-        }
-        caddyCmd = cmd
-        return nil
-}
-
-func startCaddy() error {
-        caddyMu.Lock()
-        defer caddyMu.Unlock()
-        if err := startCaddyLocked(); err != nil {
-                return err
-        }
-        time.Sleep(2 * time.Second)
-        log.Printf("Caddy started (pid %d)", caddyCmd.Process.Pid)
-        return nil
-}
-
-func restartCaddy() error {
-        caddyMu.Lock()
-        defer caddyMu.Unlock()
-        log.Println("Restarting Caddy process...")
-        if caddyCmd != nil && caddyCmd.Process != nil {
-                _ = caddyCmd.Process.Kill()
-                _ = caddyCmd.Wait()
-                caddyCmd = nil
-        }
-        if err := startCaddyLocked(); err != nil {
-                return fmt.Errorf("failed to restart caddy: %w", err)
-        }
-        time.Sleep(2 * time.Second)
-        log.Printf("Caddy restarted (pid %d)", caddyCmd.Process.Pid)
-        return nil
-}
-
-func reloadCaddy() error {
-        ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-        defer cancel()
-
-        cmd := exec.CommandContext(ctx, "./bin/caddy", "reload", "--config", "Caddyfile")
-        output, err := cmd.CombinedOutput()
-        if err != nil {
-                if ctx.Err() == context.DeadlineExceeded {
-                        log.Println("Caddy reload timed out after 15s — forcing process restart...")
-                } else {
-                        log.Printf("Caddy reload failed (%s) — forcing process restart...", strings.TrimSpace(string(output)))
+                port, ok := registry.LookupPort(name)
+                if !ok {
+                        http.NotFound(w, r)
+                        return
                 }
-                if restartErr := restartCaddy(); restartErr != nil {
-                        return fmt.Errorf("caddy restart failed: %w", restartErr)
+
+                target, _ := url.Parse(fmt.Sprintf("http://localhost:%d", port))
+                proxy := httputil.NewSingleHostReverseProxy(target)
+                proxy.Director = func(req *http.Request) {
+                        req.URL.Scheme = target.Scheme
+                        req.URL.Host = target.Host
+                        remainder := ""
+                        if len(parts) >= 3 {
+                                remainder = parts[2]
+                        }
+                        req.URL.Path = "/" + remainder
+                        req.URL.RawQuery = r.URL.RawQuery
+                        req.Host = target.Host
                 }
-                log.Println("Caddy restarted successfully after failed reload")
-                return nil
-        }
-        log.Println("Caddy config reloaded successfully")
-        return nil
+                proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+                        log.Printf("Proxy error for /%s: %v", name, err)
+                        http.Error(w, "tunnel not connected", http.StatusBadGateway)
+                }
+                proxy.ServeHTTP(w, r)
+        })
 }
 
 func main() {
@@ -454,24 +388,10 @@ func main() {
                 log.Fatalf("Failed to initialize registry: %v", err)
         }
 
-        if err := generateCaddyfile(registry.GetAll()); err != nil {
-                log.Fatalf("Failed to generate initial Caddyfile: %v", err)
-        }
-        log.Println("Initial Caddyfile generated with persisted routes")
-
-        if err := startCaddy(); err != nil {
-                log.Fatalf("Failed to start Caddy: %v", err)
-        }
-        defer func() {
-                caddyMu.Lock()
-                if caddyCmd != nil && caddyCmd.Process != nil {
-                        _ = caddyCmd.Process.Kill()
-                        _ = caddyCmd.Wait()
-                }
-                caddyMu.Unlock()
-        }()
-
         limiter := NewRateLimiter()
+        tunnelProxy := newTunnelProxy()
+        nameProxy := newNameProxy(registry)
+
         mux := http.NewServeMux()
 
         mux.HandleFunc("/check-name", func(w http.ResponseWriter, r *http.Request) {
@@ -554,17 +474,6 @@ func main() {
                         return
                 }
 
-                if err := generateCaddyfile(registry.GetAll()); err != nil {
-                        log.Printf("Failed to regenerate Caddyfile: %v", err)
-                        w.WriteHeader(http.StatusInternalServerError)
-                        json.NewEncoder(w).Encode(map[string]string{"error": "failed to update routing config"})
-                        return
-                }
-
-                if err := reloadCaddy(); err != nil {
-                        log.Printf("Failed to reload Caddy: %v", err)
-                }
-
                 log.Printf("Claimed name '%s' on port %d (aid=%s)", req.Name, port, req.AID)
                 json.NewEncoder(w).Encode(map[string]interface{}{
                         "name":        req.Name,
@@ -634,17 +543,6 @@ func main() {
                         w.WriteHeader(http.StatusForbidden)
                         json.NewEncoder(w).Encode(map[string]string{"error": "aid mismatch: name is owned by a different identity"})
                         return
-                }
-
-                if err := generateCaddyfile(registry.GetAll()); err != nil {
-                        log.Printf("Failed to regenerate Caddyfile: %v", err)
-                        w.WriteHeader(http.StatusInternalServerError)
-                        json.NewEncoder(w).Encode(map[string]string{"error": "failed to update routing config"})
-                        return
-                }
-
-                if err := reloadCaddy(); err != nil {
-                        log.Printf("Failed to reload Caddy: %v", err)
                 }
 
                 log.Printf("Reconnected name '%s' on port %d (aid=%s)", req.Name, result.Port, req.AID)
@@ -718,13 +616,6 @@ func main() {
                         return
                 }
 
-                if err := generateCaddyfile(registry.GetAll()); err != nil {
-                        log.Printf("Failed to regenerate Caddyfile: %v", err)
-                }
-                if err := reloadCaddy(); err != nil {
-                        log.Printf("Failed to reload Caddy: %v", err)
-                }
-
                 log.Printf("Released name '%s' (aid=%s)", req.Name, req.AID)
                 json.NewEncoder(w).Encode(map[string]string{"message": "Name released successfully"})
         })
@@ -746,25 +637,36 @@ func main() {
                 })
         })
 
-        server := &http.Server{Addr: "0.0.0.0:3000", Handler: mux}
+        mux.HandleFunc("/tunnel", func(w http.ResponseWriter, r *http.Request) {
+                tunnelProxy.ServeHTTP(w, r)
+        })
+        mux.HandleFunc("/tunnel/", func(w http.ResponseWriter, r *http.Request) {
+                tunnelProxy.ServeHTTP(w, r)
+        })
+
+        mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+                if r.URL.Path == "/" {
+                        w.Header().Set("Content-Type", "text/plain")
+                        w.Write([]byte("Tunneling Hub is running. Use /check-name?name=xxx or POST /claim-name to get started."))
+                        return
+                }
+
+                nameProxy.ServeHTTP(w, r)
+        })
+
+        server := &http.Server{Addr: "0.0.0.0:5000", Handler: mux}
 
         sigCh := make(chan os.Signal, 1)
         signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
         go func() {
                 sig := <-sigCh
                 log.Printf("Received signal %v, shutting down...", sig)
-                caddyMu.Lock()
-                if caddyCmd != nil && caddyCmd.Process != nil {
-                        _ = caddyCmd.Process.Kill()
-                        _ = caddyCmd.Wait()
-                }
-                caddyMu.Unlock()
                 ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
                 defer cancel()
                 _ = server.Shutdown(ctx)
         }()
 
-        log.Println("API server starting on :3000")
+        log.Println("API server starting on :5000")
         if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
                 log.Fatalf("API server failed: %v", err)
         }

@@ -6,11 +6,10 @@ This document provides a complete explanation of how the tunneling hub works, ho
 
 ## Overview
 
-The tunneling hub is a server that allows remote devices (mobile phones, IoT devices, local development machines, etc.) to expose their local services to the public internet through secure WebSocket tunnels. It works by combining three components:
+The tunneling hub is a server that allows remote devices (mobile phones, IoT devices, local development machines, etc.) to expose their local services to the public internet through secure WebSocket tunnels. It works by combining two components:
 
-1. **Caddy** (port 5000) — A reverse proxy that receives all incoming public web traffic and routes it to the appropriate tunnel based on the URL path.
+1. **Go API** (port 5000) — The public-facing server that handles name registration, port allocation, AID-based ownership, and reverse proxying of all tunnel traffic.
 2. **Chisel** (port 8080) — A tunnel server that accepts persistent WebSocket connections from remote devices, creating secure tunnels between the server and each device.
-3. **Go API** (port 3000) — A lightweight API that manages name registration, port allocation, AID-based ownership, and dynamic routing configuration.
 
 When a device registers a name (e.g., "alice"), it receives a port number. The device then opens a Chisel reverse tunnel to that port. Any public traffic hitting `/alice/*` on the server is forwarded through the tunnel to the device.
 
@@ -297,11 +296,11 @@ chisel client --auth user:secret-token https://your-server.replit.app/tunnel R:1
 ```
 
 This tells Chisel:
-- Connect to the server via the `/tunnel` path (WebSocket upgrade handled by Caddy)
+- Connect to the server via the `/tunnel` path (WebSocket upgrade handled by the Go API)
 - Authenticate with `user:secret-token`
 - Reverse-forward port `10042` on the server to `localhost:3000` on the device
 
-**Important:** The Chisel server is accessible only through the `/tunnel` path on port 443 (HTTPS). It is **not** available on a separate port (e.g., 8080) from outside the server. Caddy reverse-proxies WebSocket connections from `/tunnel` to the internal Chisel server.
+**Important:** The Chisel server is accessible only through the `/tunnel` path on port 443 (HTTPS). It is **not** available on a separate port (e.g., 8080) from outside the server. The Go API reverse-proxies WebSocket connections from `/tunnel` to the internal Chisel server.
 
 ### Step 3: Verify
 
@@ -377,7 +376,7 @@ When the rate limit is exceeded, the server responds with HTTP `429`:
 
 ## Data Persistence
 
-All claimed names, port allocations, and AID ownership are stored in a PostgreSQL database. If the server restarts, all names and routes are automatically restored. The Caddy routing configuration is regenerated from the database on every startup.
+All claimed names, port allocations, and AID ownership are stored in a PostgreSQL database. If the server restarts, all names and routes are automatically restored from the database.
 
 **Database schema:**
 ```sql
@@ -400,24 +399,25 @@ CREATE TABLE claimed_names (
                               |
                               v
                     +------------------+
-                    |   Caddy (:5000)  |  <- Receives all public HTTP/WS traffic
+                    |  Go API (:5000)  |  <- Receives all public HTTP/WS traffic
                     |  Reverse Proxy   |
+                    |  Name Registry   |
                     +--------+---------+
                              |
         +--------------------+--------------------+
         |                    |                    |
         v                    v                    v
-  /tunnel -> :8080      /alice/* -> :10042   /check-name  -> :3000
-  (WebSocket)           /bob/*   -> :10043   /claim-name  -> :3000
-        |                    |               /reconnect   -> :3000
-        |                    |               /release-name-> :3000
-        v                    |               /status      -> :3000
-  +------------+             |                    |
-  |  Chisel    |<------------+         +----------+--------+
-  |  (:8080)   |                       |  Go API (:3000)   |
-  |  internal  |                       |  Name Registry    |
-  +--+-----+---+                       |  + PostgreSQL     |
-     |     |                           +-------------------+
+  /tunnel -> :8080      /alice/* -> :10042   /check-name
+  (WebSocket)           /bob/*   -> :10043   /claim-name
+        |                    |               /reconnect
+        |                    |               /release-name
+        v                    |               /status
+  +------------+             |
+  |  Chisel    |<------------+
+  |  (:8080)   |
+  |  internal  |
+  +--+-----+---+
+     |     |
    +-+     +-+
    v         v
 Device A   Device B
@@ -430,11 +430,9 @@ Device A   Device B
 
 | Component | Port | Purpose |
 |---|---|---|
-| Caddy | 5000 | Public-facing reverse proxy, routes traffic by path |
-| Chisel | 8080 (internal) | WebSocket tunnel server, accessible externally via `/tunnel` path through Caddy |
-| Go API | 3000 | Name registration, port allocation, AID ownership, Caddy config management |
+| Go API | 5000 | Public-facing server: reverse proxy, name registration, AID ownership |
+| Chisel | 8080 (internal) | WebSocket tunnel server, accessible externally via `/tunnel` path through the Go API |
 | PostgreSQL | 5432 | Persistent storage for claimed names, ports, and AIDs |
-| Caddy Admin | 2019 | Internal admin API for config reloads (localhost only) |
 
 ---
 
@@ -461,4 +459,4 @@ Device A   Device B
 - Port allocation starts at 10042 and increments. Ports are verified as available before assignment.
 - On reconnect, a new port may be allocated (the agent should use whatever port is returned).
 - The server is designed to run on Replit as a VM deployment (always-on).
-- Caddy listens generically (not bound to a specific domain), so it works with any domain pointed at it.
+- Route changes are instant in-memory updates — no config file reloads or subprocess restarts needed.

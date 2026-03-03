@@ -143,10 +143,10 @@ DNS resolves hub.example.com → your-project.replit.app (CNAME)
 Replit receives the request, terminates TLS
         │
         ▼
-Caddy on port 5000 receives: /alice/api/data
+Go API on port 5000 receives: /alice/api/data
         │
         ▼
-Caddy matches /alice/* → reverse proxy to localhost:10042
+Go API matches /alice/* → reverse proxy to localhost:10042
         │
         ▼
 Chisel tunnel on port 10042 forwards to the connected device
@@ -164,7 +164,7 @@ You can point multiple domains at the same server. For example:
 - `hub.example.com` → your-project.replit.app
 - `tunnel.mycompany.com` → your-project.replit.app
 
-Both will work because Caddy is configured to accept traffic from any domain. Just repeat Steps 3 and 4 for each additional domain.
+Both will work because the server accepts traffic from any domain. Just repeat Steps 3 and 4 for each additional domain.
 
 ---
 
