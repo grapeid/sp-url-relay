@@ -5,7 +5,7 @@ import (
         "database/sql"
         "encoding/json"
         "fmt"
-        "log"
+        "log/slog"
         "net"
         "net/http"
         "net/http/httputil"
@@ -20,6 +20,16 @@ import (
 
         _ "github.com/lib/pq"
 )
+
+var (
+        infoLog *slog.Logger
+        errLog  *slog.Logger
+)
+
+func init() {
+        infoLog = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+        errLog = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+}
 
 type nameEntry struct {
         Port int
@@ -59,7 +69,7 @@ func (r *Registry) loadFromDB() error {
                 }
                 r.cache[name] = nameEntry{Port: port, AID: aid}
         }
-        log.Printf("Loaded %d existing name(s) from database", len(r.cache))
+        infoLog.Info("Loaded existing names from database", "count", len(r.cache))
         return rows.Err()
 }
 
@@ -332,7 +342,7 @@ func newNameProxy(registry *Registry) http.Handler {
                         req.Host = target.Host
                 }
                 proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-                        log.Printf("Proxy error for /%s: %v", name, err)
+                        errLog.Error("Proxy error", "name", name, "error", err)
                         http.Error(w, "tunnel not connected", http.StatusBadGateway)
                 }
                 proxy.ServeHTTP(w, r)
@@ -342,12 +352,14 @@ func newNameProxy(registry *Registry) http.Handler {
 func main() {
         dbURL := os.Getenv("DATABASE_URL")
         if dbURL == "" {
-                log.Fatal("DATABASE_URL environment variable is not set")
+                errLog.Error("DATABASE_URL environment variable is not set")
+                os.Exit(1)
         }
 
         db, err := sql.Open("postgres", dbURL)
         if err != nil {
-                log.Fatalf("Failed to connect to database: %v", err)
+                errLog.Error("Failed to connect to database", "error", err)
+                os.Exit(1)
         }
         defer db.Close()
 
@@ -356,9 +368,10 @@ func main() {
         db.SetConnMaxLifetime(5 * time.Minute)
 
         if err := db.Ping(); err != nil {
-                log.Fatalf("Failed to ping database: %v", err)
+                errLog.Error("Failed to ping database", "error", err)
+                os.Exit(1)
         }
-        log.Println("Connected to PostgreSQL database")
+        infoLog.Info("Connected to PostgreSQL database")
 
         _, err = db.Exec(`
                 CREATE TABLE IF NOT EXISTS claimed_names (
@@ -371,7 +384,8 @@ func main() {
                 )
         `)
         if err != nil {
-                log.Fatalf("Failed to ensure schema: %v", err)
+                errLog.Error("Failed to ensure schema", "error", err)
+                os.Exit(1)
         }
 
         for _, migration := range []string{
@@ -379,13 +393,14 @@ func main() {
                 "ALTER TABLE claimed_names ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()",
         } {
                 if _, err := db.Exec(migration); err != nil {
-                        log.Printf("Migration note: %v", err)
+                        errLog.Error("Migration failed", "sql", migration, "error", err)
                 }
         }
 
         registry, err := NewRegistry(db)
         if err != nil {
-                log.Fatalf("Failed to initialize registry: %v", err)
+                errLog.Error("Failed to initialize registry", "error", err)
+                os.Exit(1)
         }
 
         limiter := NewRateLimiter()
@@ -420,7 +435,7 @@ func main() {
 
                 available, err := registry.IsAvailable(name)
                 if err != nil {
-                        log.Printf("DB error checking name '%s': %v", name, err)
+                        errLog.Error("DB error checking name", "name", name, "error", err)
                         w.WriteHeader(http.StatusInternalServerError)
                         json.NewEncoder(w).Encode(map[string]string{"error": "internal error"})
                         return
@@ -463,7 +478,7 @@ func main() {
 
                 port, err := registry.Claim(req.Name, req.AID)
                 if err != nil {
-                        log.Printf("DB error claiming name '%s': %v", req.Name, err)
+                        errLog.Error("DB error claiming name", "name", req.Name, "error", err)
                         w.WriteHeader(http.StatusInternalServerError)
                         json.NewEncoder(w).Encode(map[string]string{"error": "internal error"})
                         return
@@ -474,7 +489,7 @@ func main() {
                         return
                 }
 
-                log.Printf("Claimed name '%s' on port %d (aid=%s)", req.Name, port, req.AID)
+                infoLog.Info("Claimed name", "name", req.Name, "port", port, "aid", req.AID)
                 json.NewEncoder(w).Encode(map[string]interface{}{
                         "name":        req.Name,
                         "port":        port,
@@ -524,7 +539,7 @@ func main() {
 
                 result, err := registry.Reconnect(req.Name, req.AID)
                 if err != nil {
-                        log.Printf("DB error reconnecting name '%s': %v", req.Name, err)
+                        errLog.Error("DB error reconnecting name", "name", req.Name, "error", err)
                         w.WriteHeader(http.StatusInternalServerError)
                         json.NewEncoder(w).Encode(map[string]string{"error": "internal error"})
                         return
@@ -545,7 +560,7 @@ func main() {
                         return
                 }
 
-                log.Printf("Reconnected name '%s' on port %d (aid=%s)", req.Name, result.Port, req.AID)
+                infoLog.Info("Reconnected name", "name", req.Name, "port", result.Port, "aid", req.AID)
                 json.NewEncoder(w).Encode(map[string]interface{}{
                         "name":        req.Name,
                         "port":        result.Port,
@@ -595,7 +610,7 @@ func main() {
 
                 result, err := registry.Release(req.Name, req.AID)
                 if err != nil {
-                        log.Printf("DB error releasing name '%s': %v", req.Name, err)
+                        errLog.Error("DB error releasing name", "name", req.Name, "error", err)
                         w.WriteHeader(http.StatusInternalServerError)
                         json.NewEncoder(w).Encode(map[string]string{"error": "internal error"})
                         return
@@ -616,7 +631,7 @@ func main() {
                         return
                 }
 
-                log.Printf("Released name '%s' (aid=%s)", req.Name, req.AID)
+                infoLog.Info("Released name", "name", req.Name, "aid", req.AID)
                 json.NewEncoder(w).Encode(map[string]string{"message": "Name released successfully"})
         })
 
@@ -660,15 +675,16 @@ func main() {
         signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
         go func() {
                 sig := <-sigCh
-                log.Printf("Received signal %v, shutting down...", sig)
+                infoLog.Info("Received signal, shutting down", "signal", sig.String())
                 ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
                 defer cancel()
                 _ = server.Shutdown(ctx)
         }()
 
-        log.Println("API server starting on :5000")
+        infoLog.Info("API server starting on :5000")
         if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-                log.Fatalf("API server failed: %v", err)
+                errLog.Error("API server failed", "error", err)
+                os.Exit(1)
         }
-        log.Println("API server stopped")
+        infoLog.Info("API server stopped")
 }
