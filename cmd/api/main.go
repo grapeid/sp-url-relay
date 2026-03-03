@@ -10,9 +10,11 @@ import (
         "net/http"
         "os"
         "os/exec"
+        "os/signal"
         "regexp"
         "strings"
         "sync"
+        "syscall"
         "text/template"
         "time"
 
@@ -278,6 +280,7 @@ var namePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$`)
 var caddyfileTmpl = template.Must(template.New("caddyfile").Parse(`{
         auto_https off
         admin localhost:2019
+        grace_period 5s
 }
 
 :5000 {
@@ -344,6 +347,7 @@ func startCaddyLocked() error {
         cmd := exec.Command("./bin/caddy", "run", "--config", "Caddyfile")
         cmd.Stdout = os.Stdout
         cmd.Stderr = os.Stderr
+        cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
         if err := cmd.Start(); err != nil {
                 return fmt.Errorf("failed to start caddy: %w", err)
         }
@@ -742,8 +746,27 @@ func main() {
                 })
         })
 
+        server := &http.Server{Addr: "0.0.0.0:3000", Handler: mux}
+
+        sigCh := make(chan os.Signal, 1)
+        signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+        go func() {
+                sig := <-sigCh
+                log.Printf("Received signal %v, shutting down...", sig)
+                caddyMu.Lock()
+                if caddyCmd != nil && caddyCmd.Process != nil {
+                        _ = caddyCmd.Process.Kill()
+                        _ = caddyCmd.Wait()
+                }
+                caddyMu.Unlock()
+                ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+                defer cancel()
+                _ = server.Shutdown(ctx)
+        }()
+
         log.Println("API server starting on :3000")
-        if err := http.ListenAndServe("0.0.0.0:3000", mux); err != nil {
+        if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
                 log.Fatalf("API server failed: %v", err)
         }
+        log.Println("API server stopped")
 }

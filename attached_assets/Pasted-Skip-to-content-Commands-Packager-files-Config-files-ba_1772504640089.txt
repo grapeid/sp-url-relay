@@ -1,0 +1,889 @@
+Skip to content
+Commands
+Packager files
+Config files
+bash scripts/start.sh
+143m
+ • 
+2 hours ago
+3 ports opened on
+1 port did not open
+/
+
+Time
+Deployment
+Source
+Log
+2026-03-01 09:47:03.79
+9621d5be
+System
+starting up user application
+2026-03-02 17:23:01.86
+1e0052e1
+User
+{"level":"info","ts":1772497381.86704,"logger":"admin","msg":"admin endpoint started","address":"localhost:2019","enforce_origin":false,"origins":["//localhost:2019","//[::1]:2019","//127.0.0.1:2019"]}
+2026-03-02 17:23:01.86
+1e0052e1
+User
+{"level":"info","ts":1772497381.8673935,"logger":"http.auto_https","msg":"automatic HTTPS is completely disabled for server","server_name":"srv0"}
+2026-03-02 17:23:01.86
+1e0052e1
+User
+{"level":"warn","ts":1772497381.8692536,"logger":"http","msg":"HTTP/3 skipped because it requires TLS","network":"tcp","addr":":5000"}
+2026-03-02 17:23:01.86
+1e0052e1
+User
+{"level":"info","ts":1772497381.86926,"logger":"http.log","msg":"server running","name":"srv0","protocols":["h1","h2","h3"]}
+2026-03-02 17:23:01.86
+1e0052e1
+User
+{"level":"info","ts":1772497381.8692737,"logger":"http","msg":"servers shutting down with eternal grace period"}
+2026-03-02 17:23:01.86
+1e0052e1
+User
+{"level":"warn","ts":1772497381.8692214,"logger":"http","msg":"HTTP/2 skipped because it requires TLS","network":"tcp","addr":":5000"}
+2026-03-02 17:23:01.87
+1e0052e1
+User
+{"level":"info","ts":1772497381.8702712,"logger":"admin.api","msg":"load complete"}
+2026-03-02 17:23:01.87
+1e0052e1
+User
+{"level":"info","ts":1772497381.8702383,"msg":"autosaved config (load with --resume flag)","file":"/home/runner/workspace/.config/caddy/autosave.json"}
+2026-03-02 17:23:01.87
+1e0052e1
+User
+{"level":"info","ts":1772497381.871494,"logger":"admin","msg":"stopped previous server","address":"localhost:2019"}
+2026-03-02 17:23:01.87
+1e0052e1
+User
+2026/03/03 00:23:01 Claimed name 'identity-agent-test-031' on port 10042 (aid=ED4zKjGVbjhKp-otddHszlj0bNERyTKYDS3nTqS7J_av)
+2026-03-02 17:23:01.87
+1e0052e1
+User
+2026/03/03 00:23:01 Caddy config reloaded successfully
+2026-03-02 17:23:02.85
+1e0052e1
+User
+2026/03/03 00:23:02 server: session#3: Client version (0.0.0-src) differs from server version (1.10.1)
+2026-03-02 17:23:02.85
+1e0052e1
+User
+2026/03/03 00:23:02 server: session#3: tun: proxy#R:10042=>localhost:5000: Listening
+2026-03-02 17:42:01.86
+1e0052e1
+User
+2026/03/03 00:42:01 server: session#4: Client version (0.0.0-src) differs from server version (1.10.1)
+2026-03-02 17:42:01.87
+1e0052e1
+User
+2026/03/03 00:42:01 server: session#4: tun: proxy#R:10042=>localhost:5000: Listening
+2026-03-02 17:42:26.74
+1e0052e1
+User
+{"level":"info","ts":1772498546.7476554,"logger":"admin.api","msg":"received request","method":"POST","host":"localhost:2019","uri":"/load","remote_ip":"127.0.0.1","remote_port":"51890","headers":{"Accept-Encoding":["gzip"],"Content-Length":["2368"],"Content-Type":["application/json"],"Origin":["http://localhost:2019"],"User-Agent":["Go-http-client/1.1"]}}
+2026-03-02 17:42:26.75
+1e0052e1
+User
+{"level":"info","ts":1772498546.7504766,"logger":"admin","msg":"admin endpoint started","address":"localhost:2019","enforce_origin":false,"origins":["//localhost:2019","//[::1]:2019","//127.0.0.1:2019"]}
+2026-03-02 17:42:26.75
+1e0052e1
+User
+{"level":"info","ts":1772498546.7507906,"logger":"http.auto_https","msg":"automatic HTTPS is completely disabled for server","server_name":"srv0"}
+2026-03-02 17:42:26.75
+1e0052e1
+User
+{"level":"info","ts":1772498546.7530198,"logger":"http.log","msg":"server running","name":"srv0","protocols":["h1","h2","h3"]}
+2026-03-02 17:42:26.75
+1e0052e1
+User
+{"level":"warn","ts":1772498546.7530146,"logger":"http","msg":"HTTP/3 skipped because it requires TLS","network":"tcp","addr":":5000"}
+2026-03-02 17:42:26.75
+1e0052e1
+User
+{"level":"warn","ts":1772498546.7529979,"logger":"http","msg":"HTTP/2 skipped because it requires TLS","network":"tcp","addr":":5000"}
+2026-03-02 17:42:26.75
+1e0052e1
+User
+{"level":"info","ts":1772498546.753038,"logger":"http","msg":"servers shutting down with eternal grace period"}
+2026-03-02 17:42:26.75
+1e0052e1
+User
+{"level":"info","ts":1772498546.7540252,"msg":"autosaved config (load with --resume flag)","file":"/home/runner/workspace/.config/caddy/autosave.json"}
+2026-03-02 17:42:26.75
+1e0052e1
+User
+{"level":"info","ts":1772498546.7540452,"logger":"admin.api","msg":"load complete"}
+2026-03-02 17:42:26.75
+1e0052e1
+User
+2026/03/03 00:42:26 Caddy config reloaded successfully
+2026-03-02 17:42:26.75
+1e0052e1
+User
+2026/03/03 00:42:26 Claimed name 'android' on port 10043 (aid=EL6Gt786tasceMiIqz7uv2UkSy_lxc-ds9oPptGX6-7Z)
+2026-03-02 17:42:26.75
+1e0052e1
+User
+{"level":"info","ts":1772498546.759017,"logger":"admin","msg":"stopped previous server","address":"localhost:2019"}
+2026-03-02 17:42:27.36
+1e0052e1
+User
+2026/03/03 00:42:27 server: session#6: Client version (0.0.0-src) differs from server version (1.10.1)
+2026-03-02 17:42:27.43
+1e0052e1
+User
+2026/03/03 00:42:27 server: session#5: Client version (0.0.0-src) differs from server version (1.10.1)
+2026-03-02 17:42:52.16
+1e0052e1
+User
+{"level":"info","ts":1772498572.1628163,"logger":"admin.api","msg":"received request","method":"POST","host":"localhost:2019","uri":"/load","remote_ip":"127.0.0.1","remote_port":"58882","headers":{"Accept-Encoding":["gzip"],"Content-Length":["2080"],"Content-Type":["application/json"],"Origin":["http://localhost:2019"],"User-Agent":["Go-http-client/1.1"]}}
+2026-03-02 17:43:07.02
+1e0052e1
+User
+2026/03/03 00:43:07 Caddy reload timed out after 15s — forcing process restart...
+2026-03-02 17:43:07.02
+1e0052e1
+User
+2026/03/03 00:43:07 Restarting Caddy process...
+2026-03-02 17:43:07.15
+1e0052e1
+User
+{"level":"info","ts":1772498587.1579335,"msg":"using config from file","file":"Caddyfile"}
+2026-03-02 17:43:07.15
+1e0052e1
+User
+{"level":"warn","ts":1772498587.1590302,"logger":"caddyfile","msg":"Unnecessary header_up X-Forwarded-Proto: the reverse proxy's default behavior is to pass headers to the upstream"}
+2026-03-02 17:43:07.16
+1e0052e1
+User
+{"level":"warn","ts":1772498587.159907,"logger":"caddyfile","msg":"Unnecessary header_up X-Forwarded-Proto: the reverse proxy's default behavior is to pass headers to the upstream"}
+2026-03-02 17:43:07.16
+1e0052e1
+User
+{"level":"info","ts":1772498587.1611564,"msg":"adapted config to JSON","adapter":"caddyfile"}
+2026-03-02 17:43:07.16
+1e0052e1
+User
+{"level":"warn","ts":1772498587.1611748,"msg":"Caddyfile input is not formatted; run 'caddy fmt --overwrite' to fix inconsistencies","adapter":"caddyfile","file":"Caddyfile","line":2}
+2026-03-02 17:43:09.02
+1e0052e1
+User
+2026/03/03 00:43:09 Caddy restarted (pid 139)
+2026-03-02 17:43:09.02
+1e0052e1
+User
+2026/03/03 00:43:09 Released name 'identity-agent-test-031' (aid=ED4zKjGVbjhKp-otddHszlj0bNERyTKYDS3nTqS7J_av)
+2026-03-02 17:43:09.02
+1e0052e1
+User
+2026/03/03 00:43:09 Caddy restarted successfully after failed reload
+Wrap
+Colors
+You're viewing your database in read-only mode.
+Enable Editing
+
+
+SQL console
+
+Database studio
+
+schema:
+public
+Search...
+
+
+
+
+
+
+
+
+
+
+
+
+
+Filters
+
+
+Columns
+
+1 row•94ms
+
+
+50
+0
+
+
+
+All statements executed successfully
+All statements executed successfully
+
+Custom Domain Setup Guide
+This document explains how to point your own domain at the tunneling hub server so that traffic to your domain (e.g., hub.example.com/alice/) is routed through the server to the appropriate tunnel.
+
+This guide uses Namecheap as the domain registrar, but the DNS concepts apply to any provider.
+
+Prerequisites
+The tunneling hub must be deployed (published) on Replit so it has a stable production URL (e.g., your-project.replit.app).
+You must own a domain registered with Namecheap (or another registrar).
+Step 1: Deploy the Server on Replit
+If you haven't already:
+
+Open your Replit project.
+Click the Deploy button (or go to the Deployments tab).
+The deployment is pre-configured as a VM (always-on) deployment.
+Click Publish and wait for the deployment to complete.
+Note your production URL — it will look like your-project.replit.app.
+Step 2: Decide on Your Domain Structure
+You have two main options:
+
+Option A: Subdomain (Recommended)
+Use a subdomain like hub.example.com or tunnel.example.com. This is the simplest and most reliable approach because CNAME records work perfectly with subdomains.
+
+Result: https://hub.example.com/alice/page
+
+Option B: Root Domain
+Use the root domain directly, like example.com. This is more complex because most DNS providers (including Namecheap) don't support CNAME records on root/apex domains. You would need to use URL forwarding or a provider that supports ALIAS/ANAME records.
+
+Result: https://example.com/alice/page
+
+We recommend Option A for simplicity.
+
+Step 3: Configure DNS on Namecheap
+For a Subdomain (Option A)
+Log in to namecheap.com.
+Go to Domain List in the left sidebar.
+Find your domain and click Manage.
+Click the Advanced DNS tab.
+Click Add New Record and configure:
+Field	Value
+Type	CNAME Record
+Host	hub (or whatever subdomain you want)
+Value	your-project.replit.app
+TTL	Automatic
+Click the checkmark to save.
+This tells DNS: "When someone visits hub.example.com, send them to your-project.replit.app."
+
+For the Root Domain (Option B)
+Root domains can't use CNAME records. Instead, use Namecheap's URL redirect feature to forward the root domain to your subdomain:
+
+Follow the subdomain steps above first (set up hub.example.com).
+In the Advanced DNS tab, click Add New Record:
+Field	Value
+Type	URL Redirect Record
+Host	@
+Value	https://hub.example.com
+Redirect Type	Permanent (301)
+This sends anyone visiting example.com to hub.example.com, which then resolves to your Replit server.
+
+Step 4: Link the Domain in Replit
+After DNS is configured, you need to tell Replit about your custom domain:
+
+Open your Replit project.
+Go to the Deployments tab.
+Find your active deployment.
+Look for Custom Domains (or a link/button to manage domains).
+Click Add Domain and enter your domain (e.g., hub.example.com).
+Replit will verify DNS ownership and automatically provision a TLS/SSL certificate.
+This step is required. Without it, Replit won't know to route traffic from your domain to your project.
+
+Step 5: Wait for DNS Propagation
+DNS changes can take anywhere from a few minutes to 48 hours to propagate globally, though most changes take effect within 5–30 minutes.
+
+You can check propagation status using:
+
+whatsmydns.net — Enter your domain and select CNAME to see if it resolves correctly worldwide.
+Step 6: Verify Everything Works
+Once DNS has propagated:
+
+# Check the server is responding on your domain
+curl https://hub.example.com
+# Expected: "Tunneling Hub is running..."
+# Check name availability
+curl https://hub.example.com/check-name?name=alice
+# Claim a name
+curl -X POST https://hub.example.com/claim-name \
+  -H "Content-Type: application/json" \
+  -d '{"name": "alice"}'
+# View active routes
+curl https://hub.example.com/status
+How Traffic Flows with a Custom Domain
+User visits: https://hub.example.com/alice/api/data
+        │
+        ▼
+DNS resolves hub.example.com → your-project.replit.app (CNAME)
+        │
+        ▼
+Replit receives the request, terminates TLS
+        │
+        ▼
+Caddy on port 5000 receives: /alice/api/data
+        │
+        ▼
+Caddy matches /alice/* → reverse proxy to localhost:10042
+        │
+        ▼
+Chisel tunnel on port 10042 forwards to the connected device
+        │
+        ▼
+Device receives: /api/data (prefix stripped)
+Multiple Domains
+You can point multiple domains at the same server. For example:
+
+hub.example.com → your-project.replit.app
+tunnel.mycompany.com → your-project.replit.app
+Both will work because Caddy is configured to accept traffic from any domain. Just repeat Steps 3 and 4 for each additional domain.
+
+Troubleshooting
+"Site can't be reached" or DNS errors
+DNS may not have propagated yet. Wait 15–30 minutes and try again.
+Verify the CNAME record is correct on whatsmydns.net.
+Make sure you added the domain in Replit's Deployments tab.
+"Certificate error" or TLS warnings
+Replit provisions TLS certificates automatically, but it can take a few minutes after adding the custom domain.
+Ensure the domain in Replit's custom domain settings exactly matches your DNS configuration.
+API responds but tunnel doesn't work
+Verify the Chisel client is connected and the tunnel is active.
+Confirm the port in the Chisel client command matches the port returned by /claim-name.
+Check that the local service on the device is actually running on the expected port.
+Namecheap DNS settings not saving
+Make sure you're not using Namecheap's BasicDNS or ParkingPage if you've switched to custom nameservers.
+Verify that you're editing DNS under the correct domain.
+Quick Reference
+What	Where
+DNS Provider	Namecheap → Advanced DNS tab
+Record Type	CNAME
+Host	Your chosen subdomain (e.g., hub)
+Value	Your Replit production URL (e.g., your-project.replit.app)
+Replit Custom Domain	Deployments tab → Custom Domains
+TLS/SSL	Automatic (managed by Replit)
+DNS Propagation Check	whatsmydns.net
+Tunneling Hub Server Guide
+This document provides a complete explanation of how the tunneling hub works, how to interact with it, and how to connect a mobile device or any service through it.
+
+Overview
+The tunneling hub is a server that allows remote devices (mobile phones, IoT devices, local development machines, etc.) to expose their local services to the public internet through secure WebSocket tunnels. It works by combining three components:
+
+Caddy (port 5000) — A reverse proxy that receives all incoming public web traffic and routes it to the appropriate tunnel based on the URL path.
+Chisel (port 8080) — A tunnel server that accepts persistent WebSocket connections from remote devices, creating secure tunnels between the server and each device.
+Go API (port 3000) — A lightweight API that manages name registration, port allocation, AID-based ownership, and dynamic routing configuration.
+When a device registers a name (e.g., "alice"), it receives a port number. The device then opens a Chisel reverse tunnel to that port. Any public traffic hitting /alice/* on the server is forwarded through the tunnel to the device.
+
+AID-Based Ownership
+Names can optionally be associated with an AID (Autonomic Identifier) on first claim. This enables:
+
+Reconnection after restarts: If an agent crashes or restarts, it can reconnect to its previously-claimed name using the /reconnect endpoint with its AID.
+Ownership verification: Only the AID that originally claimed a name can reconnect to it or release it.
+Graceful shutdown: Agents can voluntarily release their name via /release-name so it becomes available for others.
+The current model is trust-on-first-use (TOFU): the AID is associated with the name on first claim. A future enhancement will add KERI signature headers for cryptographic proof of ownership.
+
+Names claimed without an AID work as before but cannot use the reconnect or release features.
+
+API Reference
+All API endpoints are accessible through the server's public URL (e.g., https://your-server.replit.app).
+
+Check Name Availability
+Checks whether a given name is already claimed.
+
+Request:
+
+GET /check-name?name=alice
+Response (available):
+
+{
+  "available": true
+}
+Response (taken):
+
+{
+  "available": false
+}
+Error responses:
+
+400 — Missing or invalid name parameter
+429 — Rate limit exceeded
+Name rules:
+
+Must be 1–63 characters
+Must start with a letter or number
+May contain letters, numbers, hyphens (-), and underscores (_)
+Case-insensitive (automatically lowercased)
+Claim a Name
+First-time registration of a new tunnel name. Optionally associates an AID for ownership.
+
+Request:
+
+POST /claim-name
+Content-Type: application/json
+{
+  "name": "alice",
+  "aid": "ED4zKjGVbjhKp-otddHszlj0bNERyTKYDS3nTqS7J_av"
+}
+The aid field is optional. If omitted, the name is claimed without ownership (legacy behavior).
+
+Response (success, 200):
+
+{
+  "name": "alice",
+  "port": 10042,
+  "tunnel_path": "/tunnel",
+  "message": "Name claimed successfully"
+}
+Response (already taken, 409):
+
+{
+  "error": "name is already taken"
+}
+Error responses:
+
+400 — Invalid JSON body or invalid name
+405 — Wrong HTTP method (must be POST)
+409 — Name already claimed (use /reconnect if you own it)
+429 — Rate limit exceeded
+500 — Internal error
+Reconnect to a Name
+Re-establish a previously claimed tunnel connection after agent restart. Requires the AID that was used to originally claim the name.
+
+Request:
+
+POST /reconnect
+Content-Type: application/json
+{
+  "name": "alice",
+  "aid": "ED4zKjGVbjhKp-otddHszlj0bNERyTKYDS3nTqS7J_av"
+}
+Response (success, 200):
+
+{
+  "name": "alice",
+  "port": 10042,
+  "tunnel_path": "/tunnel",
+  "message": "Reconnected successfully"
+}
+The response format is identical to /claim-name so agents can handle both with the same code. The port may differ from the original allocation.
+
+Response (name not found, 404):
+
+{
+  "error": "name not found"
+}
+Response (no owner, 403):
+
+{
+  "error": "name was claimed without an AID and cannot be reconnected"
+}
+Response (AID mismatch, 403):
+
+{
+  "error": "aid mismatch: name is owned by a different identity"
+}
+Error responses:
+
+400 — Invalid JSON body, invalid name, or missing AID
+403 — Name has no AID owner, or AID does not match the stored owner
+404 — Name not found in the database
+405 — Wrong HTTP method (must be POST)
+429 — Rate limit exceeded
+500 — Internal error
+Release a Name
+Voluntarily release a claimed name during graceful shutdown. Frees the port immediately and makes the name available for anyone to claim again.
+
+Request:
+
+POST /release-name
+Content-Type: application/json
+{
+  "name": "alice",
+  "aid": "ED4zKjGVbjhKp-otddHszlj0bNERyTKYDS3nTqS7J_av"
+}
+Response (success, 200):
+
+{
+  "message": "Name released successfully"
+}
+Response (name not found, 404):
+
+{
+  "error": "name not found"
+}
+Response (no owner, 403):
+
+{
+  "error": "name was claimed without an AID and cannot be released"
+}
+Response (AID mismatch, 403):
+
+{
+  "error": "aid mismatch: name is owned by a different identity"
+}
+Error responses:
+
+400 — Invalid JSON body, invalid name, or missing AID
+403 — Name has no AID owner, or AID does not match the stored owner
+404 — Name not found in the database
+405 — Wrong HTTP method (must be POST)
+429 — Rate limit exceeded
+500 — Internal error
+View Status
+Lists all currently claimed names and their allocated ports.
+
+Request:
+
+GET /status
+Response:
+
+{
+  "active_routes": {
+    "alice": 10042,
+    "bob": 10043
+  },
+  "count": 2
+}
+Agent-Side Flow
+The recommended flow for an Identity Agent on startup:
+
+1. Load saved tunnel settings (provider, domain, extension/name)
+2. Load agent AID from identity store
+3. Try POST /reconnect {"name": "<extension>", "aid": "<AID>"}
+   -> 200? Parse response, connect Chisel tunnel. Done.
+   -> 404 (name not found)? Go to step 4.
+   -> 403 (AID mismatch)? Fail with error - someone else owns this name.
+   -> Connection error / other? Go to step 4.
+4. Try POST /claim-name {"name": "<extension>", "aid": "<AID>"}
+   -> 200? Parse response, connect Chisel tunnel. Done.
+   -> 409 (already taken)? Fail with error.
+   -> Other error? Fail with error.
+On graceful shutdown:
+
+1. POST /release-name {"name": "<extension>", "aid": "<AID>"}
+   -> Best-effort, 3-second timeout. Log result but don't block shutdown.
+2. Close Chisel client.
+Connecting a Device via Chisel
+After claiming a name and receiving a port number, the remote device must establish a Chisel reverse tunnel.
+
+Step 1: Install Chisel on the Device
+Download the appropriate Chisel binary for your device from github.com/jpillora/chisel/releases.
+
+Step 2: Connect the Tunnel
+Run the Chisel client on the device, pointing it at the server's /tunnel path:
+
+chisel client --auth user:secret-token https://your-server.replit.app/tunnel R:<allocated-port>:<local-address>
+Example: If you claimed the name "alice" and received port 10042, and your local service runs on port 3000:
+
+chisel client --auth user:secret-token https://your-server.replit.app/tunnel R:10042:localhost:3000
+This tells Chisel:
+
+Connect to the server via the /tunnel path (WebSocket upgrade handled by Caddy)
+Authenticate with user:secret-token
+Reverse-forward port 10042 on the server to localhost:3000 on the device
+Important: The Chisel server is accessible only through the /tunnel path on port 443 (HTTPS). It is not available on a separate port (e.g., 8080) from outside the server. Caddy reverse-proxies WebSocket connections from /tunnel to the internal Chisel server.
+
+Step 3: Verify
+Once the tunnel is established, public traffic to https://your-server.replit.app/alice/ will be forwarded to localhost:3000 on the device.
+
+For example:
+
+https://your-server.replit.app/alice/api/data -> device receives request at /api/data
+https://your-server.replit.app/alice/page -> device receives request at /page
+Note: The /alice prefix is stripped before forwarding. The device sees clean paths without the name prefix.
+
+Full Workflow Example
+Here is a complete example of a mobile app connecting through the hub with AID-based ownership:
+
+# 1. Check if the name "myphone" is available
+curl https://your-server.replit.app/check-name?name=myphone
+# Response: {"available": true}
+# 2. Claim the name with an AID
+curl -X POST https://your-server.replit.app/claim-name \
+  -H "Content-Type: application/json" \
+  -d '{"name": "myphone", "aid": "ED4zKjGVbjhKp-otddHszlj0bNERyTKYDS3nTqS7J_av"}'
+# Response: {"name": "myphone", "port": 10044, "tunnel_path": "/tunnel", "message": "Name claimed successfully"}
+# 3. On the mobile device, start a local web server on port 8000
+# (this depends on your app - could be Flask, Express, etc.)
+# 4. Connect chisel tunnel
+chisel client --auth user:secret-token https://your-server.replit.app/tunnel R:10044:localhost:8000
+# 5. Now anyone can access the device at:
+#    https://your-server.replit.app/myphone/
+# 6. After a restart, reconnect using the same AID
+curl -X POST https://your-server.replit.app/reconnect \
+  -H "Content-Type: application/json" \
+  -d '{"name": "myphone", "aid": "ED4zKjGVbjhKp-otddHszlj0bNERyTKYDS3nTqS7J_av"}'
+# Response: {"name": "myphone", "port": 10045, "tunnel_path": "/tunnel", "message": "Reconnected successfully"}
+# 7. On graceful shutdown, release the name
+curl -X POST https://your-server.replit.app/release-name \
+  -H "Content-Type: application/json" \
+  -d '{"name": "myphone", "aid": "ED4zKjGVbjhKp-otddHszlj0bNERyTKYDS3nTqS7J_av"}'
+# Response: {"message": "Name released successfully"}
+Rate Limits
+The API enforces per-IP rate limiting to prevent abuse:
+
+Endpoint	Burst Limit	Refill Rate
+GET /check-name	30 requests	5 per second
+POST /claim-name	10 requests	1 per second
+POST /reconnect	10 requests	1 per second
+POST /release-name	10 requests	1 per second
+GET /status	30 requests	5 per second
+When the rate limit is exceeded, the server responds with HTTP 429:
+
+{
+  "error": "rate limit exceeded, try again shortly"
+}
+Data Persistence
+All claimed names, port allocations, and AID ownership are stored in a PostgreSQL database. If the server restarts, all names and routes are automatically restored. The Caddy routing configuration is regenerated from the database on every startup.
+
+Database schema:
+
+CREATE TABLE claimed_names (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(63) UNIQUE NOT NULL,
+    port INTEGER NOT NULL,
+    aid TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+Architecture Diagram
+                         Public Internet
+                              |
+                              v
+                    +------------------+
+                    |   Caddy (:5000)  |  <- Receives all public HTTP/WS traffic
+                    |  Reverse Proxy   |
+                    +--------+---------+
+                             |
+        +--------------------+--------------------+
+        |                    |                    |
+        v                    v                    v
+  /tunnel -> :8080      /alice/* -> :10042   /check-name  -> :3000
+  (WebSocket)           /bob/*   -> :10043   /claim-name  -> :3000
+        |                    |               /reconnect   -> :3000
+        |                    |               /release-name-> :3000
+        v                    |               /status      -> :3000
+  +------------+             |                    |
+  |  Chisel    |<------------+         +----------+--------+
+  |  (:8080)   |                       |  Go API (:3000)   |
+  |  internal  |                       |  Name Registry    |
+  +--+-----+---+                       |  + PostgreSQL     |
+     |     |                           +-------------------+
+   +-+     +-+
+   v         v
+Device A   Device B
+(alice)     (bob)
+Server Components
+Component	Port	Purpose
+Caddy	5000	Public-facing reverse proxy, routes traffic by path
+Chisel	8080 (internal)	WebSocket tunnel server, accessible externally via /tunnel path through Caddy
+Go API	3000	Name registration, port allocation, AID ownership, Caddy config management
+PostgreSQL	5432	Persistent storage for claimed names, ports, and AIDs
+Caddy Admin	2019	Internal admin API for config reloads (localhost only)
+Authentication
+Chisel tunnels use user:secret-token for authentication. Only devices with this credential can establish tunnels. Clients connect via https://your-server.example.com/tunnel.
+API endpoints are currently open (no authentication required). Rate limiting provides basic abuse protection.
+AID ownership provides identity-based access control for reconnect and release operations. A future enhancement will add KERI signature verification for cryptographic proof of ownership.
+Backward Compatibility
+Agent with AID support, hub without: The agent tries /reconnect first, gets a 404 (endpoint doesn't exist), then falls back to /claim-name with the aid field. Old hubs ignore the extra field.
+Agent with AID support, hub with AID support: Full reconnect flow works. Names persist across restarts.
+Hub with AID support, agent without: Old agents don't call /reconnect or send aid. The /claim-name endpoint stores NULL for aid. Existing behavior is unchanged.
+Important Notes
+Names claimed with an AID can be released via /release-name and reconnected via /reconnect.
+Names claimed without an AID cannot be reconnected or released (no ownership proof).
+Port allocation starts at 10042 and increments. Ports are verified as available before assignment.
+On reconnect, a new port may be allocated (the agent should use whatever port is returned).
+The server is designed to run on Replit as a VM deployment (always-on).
+Caddy listens generically (not bound to a specific domain), so it works with any domain pointed at it.
+check-name
+13 results in 7 files
+40
+- `/check-name` and `/status`: 30 requests burst, 5/sec refill
+46
+- `GET /check-name?name=alice` - Check if a name is available
+35
+echo "  GET  /check-name?name=alice"
+43
+GET /check-name?name=alice
+324
+curl https://your-server.replit.app/check-name?name=myphone
+363
+| `GET /check-name` | 30 requests | 5 per second |
+410
+  /tunnel -> :8080      /alice/* -> :10042   /check-name  -> :3000
+300
+handle /check-name {
+317
+        respond "Tunneling Hub is running. Use /check-name?name=xxx or POST /claim-name to get started." 200
+404
+mux.HandleFunc("/check-name", func(w http.ResponseWriter, r *http.Request) {
+121
+curl https://hub.example.com/check-name?name=alice
+8
+- `GET /check-name?name=alice`: Checks a local database or tracking 
+3
+1.179.208:8080: i/o timeout. The /claim-name and /check-name HTTP APIs on port 443 work correctly, but the Chi
+# Tunneling Hub Server Guide
+
+This document provides a complete explanation of how the tunneling hub works, how to interact with it, and how to connect a mobile device or any service through it.
+
+---
+
+## Overview
+
+The tunneling hub is a server that allows remote devices (mobile phones, IoT devices, local development machines, etc.) to expose their local services to the public internet through secure WebSocket tunnels. It works by combining three components:
+
+1. **Caddy** (port 5000) — A reverse proxy that receives all incoming public web traffic and routes it to the appropriate tunnel based on the URL path.
+2. **Chisel** (port 8080) — A tunnel server that accepts persistent WebSocket connections from remote devices, creating secure tunnels between the server and each device.
+3. **Go API** (port 3000) — A lightweight API that manages name registration, port allocation, AID-based ownership, and dynamic routing configuration.
+
+When a device registers a name (e.g., "alice"), it receives a port number. The device then opens a Chisel reverse tunnel to that port. Any public traffic hitting `/alice/*` on the server is forwarded through the tunnel to the device.
+
+---
+
+## AID-Based Ownership
+
+Names can optionally be associated with an AID (Autonomic Identifier) on first claim. This enables:
+
+- **Reconnection after restarts:** If an agent crashes or restarts, it can reconnect to its previously-claimed name using the `/reconnect` endpoint with its AID.
+- **Ownership verification:** Only the AID that originally claimed a name can reconnect to it or release it.
+- **Graceful shutdown:** Agents can voluntarily release their name via `/release-name` so it becomes available for others.
+
+The current model is trust-on-first-use (TOFU): the AID is associated with the name on first claim. A future enhancement will add KERI signature headers for cryptographic proof of ownership.
+
+Names claimed without an AID work as before but cannot use the reconnect or release features.
+
+---
+
+## API Reference
+
+All API endpoints are accessible through the server's public URL (e.g., `https://your-server.replit.app`).
+
+### Check Name Availability
+
+Checks whether a given name is already claimed.
+
+**Request:**
+```
+GET /check-name?name=alice
+```
+
+**Response (available):**
+```json
+{
+  "available": true
+}
+```
+
+**Response (taken):**
+```json
+{
+  "available": false
+}
+```
+
+**Error responses:**
+- `400` — Missing or invalid name parameter
+- `429` — Rate limit exceeded
+
+**Name rules:**
+- Must be 1–63 characters
+- Must start with a letter or number
+- May contain letters, numbers, hyphens (`-`), and underscores (`_`)
+- Case-insensitive (automatically lowercased)
+
+---
+
+### Claim a Name
+
+First-time registration of a new tunnel name. Optionally associates an AID for ownership.
+Objective
+Fix the production outage where Caddy's graceful reload hangs forever when active WebSocket (Chisel) connections are open, blocking all HTTP handlers. The root cause: reloadCaddy() has no timeout, and Caddy's "eternal grace period" waits forever for long-lived WebSocket tunnels to close before completing a reload.
+
+Root cause: reloadCaddy() calls ./bin/caddy reload which posts to Caddy's admin API. Caddy does a graceful reload with an "eternal grace period" — it waits for all existing connections to finish. Since Chisel WebSocket tunnels never close on their own, the reload waits forever. The Go HTTP handler goroutine is stuck. Once enough handlers are stuck, the server appears fully unresponsive.
+
+Tasks
+T001: Move Caddy Lifecycle into the Go API with Restart Fallback
+Blocked By: []
+Details:
+Add package-level var (caddyCmd *exec.Cmd; caddyMu sync.Mutex) to track the running Caddy process
+Add startCaddy() error: starts ./bin/caddy run --config Caddyfile as a child process, stores result in caddyCmd, waits 2 seconds for it to bind
+Change reloadCaddy() to:
+Try ./bin/caddy reload --config Caddyfile using exec.CommandContext with a 15-second timeout
+On success: return nil (fast path, no connection disruption)
+On timeout or error: log warning and call restartCaddy() fallback
+Add restartCaddy(): acquires caddyMu, sends SIGKILL to caddyCmd.Process, calls caddyCmd.Wait(), then calls startCaddy() again — all within 5 seconds
+Call startCaddy() from main() after generating the initial Caddyfile, instead of relying on start.sh
+Files: cmd/api/main.go
+Acceptance: reloadCaddy() always completes within 20 seconds even when Chisel WebSocket sessions are active
+T002: Update start.sh to Remove Direct Caddy Start
+Blocked By: [T001]
+Details:
+Remove ./bin/caddy run --config Caddyfile & and CADDY_PID=$! lines
+Remove $CADDY_PID from the cleanup() kill list (the API process owns Caddy now; Caddy will exit when the API exits since it's a child process)
+Files: scripts/start.sh
+Acceptance: start.sh no longer starts Caddy; the API binary does it
+T003: Rebuild, Test Locally, and Redeploy
+Blocked By: [T002]
+Details:
+Remove pre-built bin/api to force a fresh build
+Restart the dev workflow and verify: all services start, /status responds, /claim-name completes quickly
+Simulate a stuck reload scenario by checking logs
+Trigger a new production deployment to restore service at grapeid.org
+Files: none (operational)
+Acceptance: curl https://grapeid.org/status responds in under 2 seconds; /claim-name works end-to-end on production
+Published your App
+Please update the server accordingly
+
+Start building
+Getting these errors on mobile on my Android are these something I need to just disconnect the grape ID custom domain and then reconfigure it ? Or how do we solve this issue for mobile or at least just on Android I'm not sure the extent of the issue?
+
+"The grapeid.org hub is currently not responding: Right now, even from this desktop (where TLS works fine), the hub accepts connections but hangs on /claim-name and /reconnect. This is a server-side issue on grapeid.org. The error message looks the same ("context deadline exceeded") but the cause is different — on desktop it's the server not responding, on mobile it was the TLS handshake never completing. "
+
+Will you please check the server to see if there is an issue and why it may not be responding? Because I'm getting errors on both mobile which the screenshot is attached, as well as testing on desktop it looks like it's not responding as well so did the last update break the server somehow? I also removed and added back the custom domain verification thinking it might be that but now I think it actually is the server and the updates that you made. So what did you change that may have broken it? I'm talking about the recent changes from today
+
+Objective
+Fix the production outage where Caddy's graceful reload hangs forever when active WebSocket (Chisel) connections are open, blocking all HTTP handlers. The root cause: reloadCaddy() has no timeout, and Caddy's "eternal grace period" waits forever for long-lived WebSocket tunnels to close before completing a reload.
+
+Root cause: reloadCaddy() calls ./bin/caddy reload which posts to Caddy's admin API. Caddy does a graceful reload with an "eternal grace period" — it waits for all existing connections to finish. Since Chisel WebSocket tunnels never close on their own, the reload waits forever. The Go HTTP handler goroutine is stuck. Once enough handlers are stuck, the server appears fully unresponsive.
+
+Tasks
+T001: Move Caddy Lifecycle into the Go API with Restart Fallback
+Blocked By: []
+Details:
+Add package-level var (caddyCmd *exec.Cmd; caddyMu sync.Mutex) to track the running Caddy process
+Add startCaddy() error: starts ./bin/caddy run --config Caddyfile as a child process, stores result in caddyCmd, waits 2 seconds for it to bind
+Change reloadCaddy() to:
+Try ./bin/caddy reload --config Caddyfile using exec.CommandContext with a 15-second timeout
+On success: return nil (fast path, no connection disruption)
+On timeout or error: log warning and call restartCaddy() fallback
+Add restartCaddy(): acquires caddyMu, sends SIGKILL to caddyCmd.Process, calls caddyCmd.Wait(), then calls startCaddy() again — all within 5 seconds
+Call startCaddy() from main() after generating the initial Caddyfile, instead of relying on start.sh
+Files: cmd/api/main.go
+Acceptance: reloadCaddy() always completes within 20 seconds even when Chisel WebSocket sessions are active
+T002: Update start.sh to Remove Direct Caddy Start
+Blocked By: [T001]
+Details:
+Remove ./bin/caddy run --config Caddyfile & and CADDY_PID=$! lines
+Remove $CADDY_PID from the cleanup() kill list (the API process owns Caddy now; Caddy will exit when the API exits since it's a child process)
+Files: scripts/start.sh
+Acceptance: start.sh no longer starts Caddy; the API binary does it
+T003: Rebuild, Test Locally, and Redeploy
+Blocked By: [T002]
+Details:
+Remove pre-built bin/api to force a fresh build
+Restart the dev workflow and verify: all services start, /status responds, /claim-name completes quickly
+Simulate a stuck reload scenario by checking logs
+Trigger a new production deployment to restore service at grapeid.org
+Files: none (operational)
+Acceptance: curl https://grapeid.org/status responds in under 2 seconds; /claim-name works end-to-end on production
+Now I should propose the session plan to the user.
+
+Start building
+Can you please verify you can access the server by pinging grapeid.org domain? It should point back to this current production server
+
+Production is back up and healthy. grapeid.org is responding in 224ms with HTTP 200:
+
+{"active_routes":{},"count":0}
+The server is live, the fix is deployed, and /claim-name, /reconnect, and /release-name will no longer hang when Chisel WebSocket tunnels are active.
+
+
+Scroll to latest
+Are you able to get a response when testing those 
