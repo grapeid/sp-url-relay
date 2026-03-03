@@ -1,6 +1,7 @@
 package main
 
 import (
+        "context"
         "database/sql"
         "encoding/json"
         "fmt"
@@ -334,11 +335,67 @@ func generateCaddyfile(routes map[string]int) error {
         return caddyfileTmpl.Execute(f, data)
 }
 
+var (
+        caddyCmd *exec.Cmd
+        caddyMu  sync.Mutex
+)
+
+func startCaddyLocked() error {
+        cmd := exec.Command("./bin/caddy", "run", "--config", "Caddyfile")
+        cmd.Stdout = os.Stdout
+        cmd.Stderr = os.Stderr
+        if err := cmd.Start(); err != nil {
+                return fmt.Errorf("failed to start caddy: %w", err)
+        }
+        caddyCmd = cmd
+        return nil
+}
+
+func startCaddy() error {
+        caddyMu.Lock()
+        defer caddyMu.Unlock()
+        if err := startCaddyLocked(); err != nil {
+                return err
+        }
+        time.Sleep(2 * time.Second)
+        log.Printf("Caddy started (pid %d)", caddyCmd.Process.Pid)
+        return nil
+}
+
+func restartCaddy() error {
+        caddyMu.Lock()
+        defer caddyMu.Unlock()
+        log.Println("Restarting Caddy process...")
+        if caddyCmd != nil && caddyCmd.Process != nil {
+                _ = caddyCmd.Process.Kill()
+                _ = caddyCmd.Wait()
+                caddyCmd = nil
+        }
+        if err := startCaddyLocked(); err != nil {
+                return fmt.Errorf("failed to restart caddy: %w", err)
+        }
+        time.Sleep(2 * time.Second)
+        log.Printf("Caddy restarted (pid %d)", caddyCmd.Process.Pid)
+        return nil
+}
+
 func reloadCaddy() error {
-        cmd := exec.Command("./bin/caddy", "reload", "--config", "Caddyfile")
+        ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+        defer cancel()
+
+        cmd := exec.CommandContext(ctx, "./bin/caddy", "reload", "--config", "Caddyfile")
         output, err := cmd.CombinedOutput()
         if err != nil {
-                return fmt.Errorf("caddy reload failed: %s: %w", string(output), err)
+                if ctx.Err() == context.DeadlineExceeded {
+                        log.Println("Caddy reload timed out after 15s — forcing process restart...")
+                } else {
+                        log.Printf("Caddy reload failed (%s) — forcing process restart...", strings.TrimSpace(string(output)))
+                }
+                if restartErr := restartCaddy(); restartErr != nil {
+                        return fmt.Errorf("caddy restart failed: %w", restartErr)
+                }
+                log.Println("Caddy restarted successfully after failed reload")
+                return nil
         }
         log.Println("Caddy config reloaded successfully")
         return nil
@@ -397,6 +454,18 @@ func main() {
                 log.Fatalf("Failed to generate initial Caddyfile: %v", err)
         }
         log.Println("Initial Caddyfile generated with persisted routes")
+
+        if err := startCaddy(); err != nil {
+                log.Fatalf("Failed to start Caddy: %v", err)
+        }
+        defer func() {
+                caddyMu.Lock()
+                if caddyCmd != nil && caddyCmd.Process != nil {
+                        _ = caddyCmd.Process.Kill()
+                        _ = caddyCmd.Wait()
+                }
+                caddyMu.Unlock()
+        }()
 
         limiter := NewRateLimiter()
         mux := http.NewServeMux()
