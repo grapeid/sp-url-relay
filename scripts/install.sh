@@ -1,6 +1,7 @@
 #!/bin/bash
 set -e
 
+# GHSA-38jh-8h67-m7mj: AUTH env ignored before v1.10.0 — use --auth in start.sh.
 CHISEL_VERSION="1.10.1"
 BIN_DIR="./bin"
 

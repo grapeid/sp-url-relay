@@ -5,15 +5,15 @@ echo "=== Tunneling Hub Server ==="
 
 bash scripts/install.sh
 
-if [ ! -f bin/api ]; then
-    echo "Building API server..."
-    CGO_ENABLED=0 go build -o bin/api ./cmd/api
+if [ ! -f bin/relay ]; then
+    echo "Building M35 relay server..."
+    CGO_ENABLED=0 go build -o bin/relay ./cmd/relay
 else
-    echo "API server binary found (pre-built)."
+    echo "Relay server binary found (pre-built)."
 fi
 
-echo "Starting API server on port 5000..."
-./bin/api &
+echo "Starting M35 url-relay on port 5000..."
+RELAY_APEX="${RELAY_APEX:-relay.grapeid.org}" SQLITE_PATH="${SQLITE_PATH:-./data/relay.db}" ./bin/relay &
 API_PID=$!
 sleep 1
 
