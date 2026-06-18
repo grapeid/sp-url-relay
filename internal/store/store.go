@@ -25,16 +25,16 @@ type Allocation struct {
 	CreatedAt       string
 }
 
-type Store struct {
+type sqliteStore struct {
 	db *sql.DB
 }
 
-func Open(path string) (*Store, error) {
+func openSQLite(path string) (Store, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{db: db}
+	s := &sqliteStore{db: db}
 	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, err
@@ -42,9 +42,9 @@ func Open(path string) (*Store, error) {
 	return s, nil
 }
 
-func (s *Store) Close() error { return s.db.Close() }
+func (s *sqliteStore) Close() error { return s.db.Close() }
 
-func (s *Store) migrate() error {
+func (s *sqliteStore) migrate() error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS enrollments (
 			enrollment_aid TEXT PRIMARY KEY,
@@ -76,7 +76,7 @@ func (s *Store) migrate() error {
 	return nil
 }
 
-func (s *Store) SaveEnrollment(e Enrollment) error {
+func (s *sqliteStore) SaveEnrollment(e Enrollment) error {
 	root := 0
 	if e.RootAIDEnrollment {
 		root = 1
@@ -91,7 +91,7 @@ func (s *Store) SaveEnrollment(e Enrollment) error {
 	return err
 }
 
-func (s *Store) GetEnrollment(aid string) (*Enrollment, error) {
+func (s *sqliteStore) GetEnrollment(aid string) (*Enrollment, error) {
 	var e Enrollment
 	var root int
 	err := s.db.QueryRow(`SELECT enrollment_aid, oobi_url, public_key_b64, root_aid_enrollment, enrolled_at
@@ -107,66 +107,69 @@ func (s *Store) GetEnrollment(aid string) (*Enrollment, error) {
 	return &e, nil
 }
 
-func (s *Store) HasEnrollment(aid string) (bool, error) {
+func (s *sqliteStore) HasEnrollment(aid string) (bool, error) {
 	var n int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM enrollments WHERE enrollment_aid = ?`, aid).Scan(&n)
 	return n > 0, err
 }
 
-func (s *Store) SaveAllocation(a Allocation) error {
+func (s *sqliteStore) SaveAllocation(a Allocation) error {
 	_, err := s.db.Exec(`INSERT INTO allocations (allocation_token, raid, public_hostname, enrollment_aid, created_at)
 		VALUES (?, ?, ?, ?, ?)`, a.AllocationToken, a.RAID, a.PublicHostname, a.EnrollmentAID, a.CreatedAt)
 	return err
 }
 
-func (s *Store) GetAllocationByRAID(raid string) (*Allocation, error) {
+func (s *sqliteStore) GetAllocationByRAID(raid string) (*Allocation, error) {
 	var a Allocation
 	err := s.db.QueryRow(`SELECT allocation_token, raid, public_hostname, enrollment_aid, created_at
-		FROM allocations WHERE raid = ?`, raid).Scan(&a.AllocationToken, &a.RAID, &a.PublicHostname, &a.EnrollmentAID, &a.CreatedAt)
+		FROM allocations WHERE raid = ?`, raid).Scan(
+		&a.AllocationToken, &a.RAID, &a.PublicHostname, &a.EnrollmentAID, &a.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	return &a, err
 }
 
-func (s *Store) GetAllocationByToken(token string) (*Allocation, error) {
+func (s *sqliteStore) GetAllocationByToken(token string) (*Allocation, error) {
 	var a Allocation
 	err := s.db.QueryRow(`SELECT allocation_token, raid, public_hostname, enrollment_aid, created_at
-		FROM allocations WHERE allocation_token = ?`, token).Scan(&a.AllocationToken, &a.RAID, &a.PublicHostname, &a.EnrollmentAID, &a.CreatedAt)
+		FROM allocations WHERE allocation_token = ?`, token).Scan(
+		&a.AllocationToken, &a.RAID, &a.PublicHostname, &a.EnrollmentAID, &a.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	return &a, err
 }
 
-func (s *Store) GetAllocationByHostname(host string) (*Allocation, error) {
+func (s *sqliteStore) GetAllocationByHostname(host string) (*Allocation, error) {
 	var a Allocation
 	err := s.db.QueryRow(`SELECT allocation_token, raid, public_hostname, enrollment_aid, created_at
-		FROM allocations WHERE public_hostname = ?`, host).Scan(&a.AllocationToken, &a.RAID, &a.PublicHostname, &a.EnrollmentAID, &a.CreatedAt)
+		FROM allocations WHERE public_hostname = ?`, host).Scan(
+		&a.AllocationToken, &a.RAID, &a.PublicHostname, &a.EnrollmentAID, &a.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	return &a, err
 }
 
-func (s *Store) DeleteAllocation(token string) error {
+func (s *sqliteStore) DeleteAllocation(token string) error {
 	_, err := s.db.Exec(`DELETE FROM allocations WHERE allocation_token = ?`, token)
 	return err
 }
 
-func (s *Store) QuarantineHostname(host string) error {
+func (s *sqliteStore) QuarantineHostname(host string) error {
 	_, err := s.db.Exec(`INSERT OR IGNORE INTO quarantine (public_hostname, released_at) VALUES (?, ?)`,
 		host, time.Now().UTC().Format(time.RFC3339))
 	return err
 }
 
-func (s *Store) IsQuarantined(host string) (bool, error) {
+func (s *sqliteStore) IsQuarantined(host string) (bool, error) {
 	var n int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM quarantine WHERE public_hostname = ?`, host).Scan(&n)
 	return n > 0, err
 }
 
-func (s *Store) MintAllocationToken() (string, error) {
+func (s *sqliteStore) MintAllocationToken() (string, error) {
 	b := make([]byte, 24)
 	if _, err := rand.Read(b); err != nil {
 		return "", err

@@ -1,0 +1,2 @@
+- [Replit proxy HTTPS detection](replit-proxy-https.md) — behind Replit's proxy r.TLS is always nil; check X-Forwarded-Proto header instead
+- [Dual SQLite/PostgreSQL backend pattern](dual-db-backend.md) — UsePostgres constant in internal/store/interface.go switches backends; same pattern as sp-witness-watcher
