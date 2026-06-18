@@ -71,6 +71,6 @@ externalPort = 6000
 channel = "stable-25_05"
 
 [deployment]
-deploymentTarget = "vm"
+deploymentTarget = "cloudrun"
 run = ["bash", "scripts/start.sh"]
 build = ["bash", "-c", "bash scripts/install.sh && CGO_ENABLED=0 go build -o bin/relay ./cmd/relay"]
