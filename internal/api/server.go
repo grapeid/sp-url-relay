@@ -14,14 +14,14 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/grapeid/url-relay/internal/allowlist"
-	"github.com/grapeid/url-relay/internal/enroll"
-	"github.com/grapeid/url-relay/internal/hostname"
-	"github.com/grapeid/url-relay/internal/oobi"
-	"github.com/grapeid/url-relay/internal/protocol"
-	"github.com/grapeid/url-relay/internal/sign"
-	"github.com/grapeid/url-relay/internal/store"
-	tunnelpkg "github.com/grapeid/url-relay/internal/tunnel"
+	"github.com/grapeid/sp-url-relay/internal/allowlist"
+	"github.com/grapeid/sp-url-relay/internal/enroll"
+	"github.com/grapeid/sp-url-relay/internal/hostname"
+	"github.com/grapeid/sp-url-relay/internal/oobi"
+	"github.com/grapeid/sp-url-relay/internal/protocol"
+	"github.com/grapeid/sp-url-relay/internal/sign"
+	"github.com/grapeid/sp-url-relay/internal/store"
+	tunnelpkg "github.com/grapeid/sp-url-relay/internal/tunnel"
 )
 
 type Config struct {

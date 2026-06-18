@@ -1,4 +1,4 @@
-module github.com/grapeid/url-relay
+module github.com/grapeid/sp-url-relay
 
 go 1.24.0
 

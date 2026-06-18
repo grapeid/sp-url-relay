@@ -9,8 +9,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/grapeid/url-relay/internal/api"
-	"github.com/grapeid/url-relay/internal/store"
+	"github.com/grapeid/sp-url-relay/internal/api"
+	"github.com/grapeid/sp-url-relay/internal/store"
 )
 
 func main() {

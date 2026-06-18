@@ -11,8 +11,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/grapeid/url-relay/internal/sign"
-	"github.com/grapeid/url-relay/internal/store"
+	"github.com/grapeid/sp-url-relay/internal/sign"
+	"github.com/grapeid/sp-url-relay/internal/store"
 )
 
 func testServer(t *testing.T) (*Server, *store.Store) {
