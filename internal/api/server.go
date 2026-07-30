@@ -17,12 +17,12 @@ import (
 	"github.com/grapeid/sp-url-relay/internal/allowlist"
 	"github.com/grapeid/sp-url-relay/internal/enroll"
 	"github.com/grapeid/sp-url-relay/internal/hostname"
-	"github.com/grapeid/sp-url-relay/internal/oobi"
+	"github.com/grapeid/sp-common/oobi"
 	"github.com/grapeid/sp-url-relay/internal/protocol"
-	"github.com/grapeid/sp-url-relay/internal/sign"
+	"github.com/grapeid/sp-common/sign"
 	"github.com/grapeid/sp-url-relay/internal/store"
 	tunnelpkg "github.com/grapeid/sp-url-relay/internal/tunnel"
-	"github.com/grapeid/sp-url-relay/internal/verify"
+	"github.com/grapeid/sp-common/verify"
 )
 
 type Config struct {
@@ -132,7 +132,7 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "missing_fields", "enrollment_aid and oobi required")
 		return
 	}
-	if err := oobi.ValidateOOBIURL(body.OOBI); err != nil {
+	if err := oobi.Validate(body.OOBI); err != nil {
 		writeError(w, http.StatusBadRequest, "oobi_blocked", err.Error())
 		return
 	}

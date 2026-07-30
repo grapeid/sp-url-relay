@@ -12,9 +12,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/grapeid/sp-url-relay/internal/sign"
+	"github.com/grapeid/sp-common/sign"
 	"github.com/grapeid/sp-url-relay/internal/store"
-	"github.com/grapeid/sp-url-relay/internal/verify"
+	"github.com/grapeid/sp-common/verify"
 )
 
 func testServer(t *testing.T) (*Server, store.Store) {
@@ -55,7 +55,7 @@ func TestAllocateCSPRNGAndReleaseIdempotent(t *testing.T) {
 	pub, priv := testKeypair(t)
 	enrollmentAID := "EEnrollmentAID00000000000000000000000001"
 	_ = st.SaveEnrollment(store.Enrollment{
-		EnrollmentAID: enrollmentAID, OOBIURL: "https://agent.example/oobi",
+		EnrollmentAID: enrollmentAID, OOBIURL: "https://93.184.216.34/oobi",
 		PublicKeyB64: base64.StdEncoding.EncodeToString(pub), EnrolledAt: "2026-01-01T00:00:00Z",
 	})
 	tok, _, _ := enrollTokenForTest(enrollmentAID)
@@ -114,7 +114,7 @@ func TestQuarantineNeverReissue(t *testing.T) {
 	pub, _ := testKeypair(t)
 	enrollmentAID := "EEnrollmentAID00000000000000000000000002"
 	_ = st.SaveEnrollment(store.Enrollment{
-		EnrollmentAID: enrollmentAID, OOBIURL: "https://agent.example/oobi",
+		EnrollmentAID: enrollmentAID, OOBIURL: "https://93.184.216.34/oobi",
 		PublicKeyB64: base64.StdEncoding.EncodeToString(pub), EnrolledAt: "2026-01-01T00:00:00Z",
 	})
 	host := "deadbeef12.relay.test"
@@ -194,7 +194,7 @@ func TestEnrollRefusesAKeyThatIsNotTheAIDs(t *testing.T) {
 
 	body := map[string]interface{}{
 		"v": "IARELAY10JSON", "enrollment_aid": "EVictim",
-		"oobi": "https://attacker.example/oobi", "root_aid_enrollment": false,
+		"oobi": "https://198.51.100.7/oobi", "root_aid_enrollment": false,
 		"public_key_b64": base64.StdEncoding.EncodeToString(attackerPub),
 	}
 	canonical, _ := sign.CanonicalBody(body)
@@ -219,7 +219,7 @@ func TestEnrollRefusesAnUnsignedRequest(t *testing.T) {
 
 	body := map[string]interface{}{
 		"v": "IARELAY10JSON", "enrollment_aid": "EVictim",
-		"oobi": "https://agent.example/oobi", "public_key_b64": pubB64,
+		"oobi": "https://93.184.216.34/oobi", "public_key_b64": pubB64,
 	}
 	raw, _ := json.Marshal(body)
 	r := httptest.NewRequest(http.MethodPost, "/enroll", bytes.NewReader(raw))
@@ -239,7 +239,7 @@ func TestEnrollAcceptsTheRealOwner(t *testing.T) {
 
 	body := map[string]interface{}{
 		"v": "IARELAY10JSON", "enrollment_aid": "EOwner",
-		"oobi": "https://agent.example/oobi", "root_aid_enrollment": false,
+		"oobi": "https://93.184.216.34/oobi", "root_aid_enrollment": false,
 		"public_key_b64": pubB64,
 	}
 	canonical, _ := sign.CanonicalBody(body)

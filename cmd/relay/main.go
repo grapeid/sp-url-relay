@@ -11,7 +11,7 @@ import (
 
 	"github.com/grapeid/sp-url-relay/internal/api"
 	"github.com/grapeid/sp-url-relay/internal/store"
-	"github.com/grapeid/sp-url-relay/internal/verify"
+	"github.com/grapeid/sp-common/verify"
 )
 
 func main() {
