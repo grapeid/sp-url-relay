@@ -70,7 +70,17 @@ func trimBearer(s string) string {
 }
 
 func randomSAID() string {
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	return "E" + base64.RawURLEncoding.EncodeToString(b)[:43]
+	// 32 bytes, because that is what the shape requires: a Blake3-256 SAID is
+	// "E" followed by 43 base64url characters, and 43 characters is exactly
+	// what 32 bytes encode to. This used to take 16 bytes and slice [:43] from
+	// the 22 characters they produce, which panicked on every call — so
+	// issuing an enrollment token has never once succeeded.
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		// Unreachable in practice, and not worth returning an error for: a
+		// system that cannot produce randomness cannot issue tokens safely
+		// anyway, and a silently predictable one would be worse than a panic.
+		panic("no randomness available for token generation: " + err.Error())
+	}
+	return "E" + base64.RawURLEncoding.EncodeToString(b)
 }
