@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
@@ -11,11 +12,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/grapeid/sp-url-relay/internal/sign"
+	"github.com/grapeid/sp-common/sign"
 	"github.com/grapeid/sp-url-relay/internal/store"
+	"github.com/grapeid/sp-common/verify"
 )
 
-func testServer(t *testing.T) (*Server, *store.Store) {
+func testServer(t *testing.T) (*Server, store.Store) {
 	t.Helper()
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "relay.db"))
@@ -53,13 +55,13 @@ func TestAllocateCSPRNGAndReleaseIdempotent(t *testing.T) {
 	pub, priv := testKeypair(t)
 	enrollmentAID := "EEnrollmentAID00000000000000000000000001"
 	_ = st.SaveEnrollment(store.Enrollment{
-		EnrollmentAID: enrollmentAID, OOBIURL: "https://agent.example/oobi",
+		EnrollmentAID: enrollmentAID, OOBIURL: "https://93.184.216.34/oobi",
 		PublicKeyB64: base64.StdEncoding.EncodeToString(pub), EnrolledAt: "2026-01-01T00:00:00Z",
 	})
 	tok, _, _ := enrollTokenForTest(enrollmentAID)
 
 	allocBody := signBody(t, priv, enrollmentAID, map[string]interface{}{
-		"raid": "EPairwiseAID00000000000000000000000001",
+		"raid":   "EPairwiseAID00000000000000000000000001",
 		"intent": "serve-didwebs-artifacts", "ttl_hint": "persistent",
 	})
 	raw, _ := json.Marshal(allocBody)
@@ -112,7 +114,7 @@ func TestQuarantineNeverReissue(t *testing.T) {
 	pub, _ := testKeypair(t)
 	enrollmentAID := "EEnrollmentAID00000000000000000000000002"
 	_ = st.SaveEnrollment(store.Enrollment{
-		EnrollmentAID: enrollmentAID, OOBIURL: "https://agent.example/oobi",
+		EnrollmentAID: enrollmentAID, OOBIURL: "https://93.184.216.34/oobi",
 		PublicKeyB64: base64.StdEncoding.EncodeToString(pub), EnrolledAt: "2026-01-01T00:00:00Z",
 	})
 	host := "deadbeef12.relay.test"
@@ -135,10 +137,120 @@ func TestQuarantineNeverReissue(t *testing.T) {
 
 func enrollTokenForTest(enrollmentAID string) (string, interface{}, error) {
 	return base64.RawURLEncoding.EncodeToString([]byte(
-		`{"v":"KERI10JSON","t":"exn","i":"`+enrollmentAID+`","a":{"enrollment_aid":"`+enrollmentAID+`"}}`,
+		`{"v":"KERI10JSON","t":"exn","i":"` + enrollmentAID + `","a":{"enrollment_aid":"` + enrollmentAID + `"}}`,
 	)), nil, nil
 }
 
 func TestMain(m *testing.M) {
 	os.Exit(m.Run())
+}
+
+// ── Enrollment ───────────────────────────────────────────────────────────────
+//
+// Enrollment decides which key every later signed operation is checked against.
+// Allocation and release verify against the key recorded here, so whoever
+// enrolls an AID controls its relay presence from then on: they can take its
+// hostname, move it, and serve whatever they like from an address that claims
+// to be somebody else's. That makes this the one place the check has to be
+// right.
+
+type stubVerifier struct{ bound map[string]string }
+
+func (stubVerifier) Enabled() bool { return true }
+
+func (v stubVerifier) Verify(_ context.Context, aid, _, publicKeyB64 string) verify.Result {
+	real, ok := v.bound[aid]
+	if !ok {
+		return verify.Result{Reason: "no KEL published for that AID"}
+	}
+	if real != publicKeyB64 {
+		return verify.Result{Reason: "not this identity's current signing key"}
+	}
+	return verify.Result{Verified: true, CurrentKey: real}
+}
+
+func enrollingServer(t *testing.T, bound map[string]string) *Server {
+	t.Helper()
+	st, err := store.Open(filepath.Join(t.TempDir(), "enroll.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return New(Config{
+		Apex: "relay.test", RelayAID: "ERelay", Store: st,
+		Verifier: stubVerifier{bound: bound},
+	})
+}
+
+// Possession alone is not enough: the key must belong to the AID. Otherwise
+// anybody can enroll any identifier with a key they invented and take it over.
+func TestEnrollRefusesAKeyThatIsNotTheAIDs(t *testing.T) {
+	victimPub, _, _ := ed25519.GenerateKey(nil)
+	_, attackerPriv, _ := ed25519.GenerateKey(nil)
+	attackerPub := attackerPriv.Public().(ed25519.PublicKey)
+
+	s := enrollingServer(t, map[string]string{
+		"EVictim": base64.StdEncoding.EncodeToString(victimPub),
+	})
+
+	body := map[string]interface{}{
+		"v": "IARELAY10JSON", "enrollment_aid": "EVictim",
+		"oobi": "https://198.51.100.7/oobi", "root_aid_enrollment": false,
+		"public_key_b64": base64.StdEncoding.EncodeToString(attackerPub),
+	}
+	canonical, _ := sign.CanonicalBody(body)
+	body["signature"] = base64.StdEncoding.EncodeToString(ed25519.Sign(attackerPriv, canonical))
+	raw, _ := json.Marshal(body)
+
+	r := httptest.NewRequest(http.MethodPost, "/enroll", bytes.NewReader(raw))
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("an attacker enrolled somebody else's AID: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// Binding alone is not enough either: the key is public, so anybody could look
+// up the real one and present it without holding it.
+func TestEnrollRefusesAnUnsignedRequest(t *testing.T) {
+	victimPub, _, _ := ed25519.GenerateKey(nil)
+	pubB64 := base64.StdEncoding.EncodeToString(victimPub)
+	s := enrollingServer(t, map[string]string{"EVictim": pubB64})
+
+	body := map[string]interface{}{
+		"v": "IARELAY10JSON", "enrollment_aid": "EVictim",
+		"oobi": "https://93.184.216.34/oobi", "public_key_b64": pubB64,
+	}
+	raw, _ := json.Marshal(body)
+	r := httptest.NewRequest(http.MethodPost, "/enroll", bytes.NewReader(raw))
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+
+	if w.Code == http.StatusOK {
+		t.Fatal("an AID was enrolled with its real public key by somebody who does not hold it")
+	}
+}
+
+// The genuine owner, holding the key the KEL names, still gets in.
+func TestEnrollAcceptsTheRealOwner(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	pubB64 := base64.StdEncoding.EncodeToString(pub)
+	s := enrollingServer(t, map[string]string{"EOwner": pubB64})
+
+	body := map[string]interface{}{
+		"v": "IARELAY10JSON", "enrollment_aid": "EOwner",
+		"oobi": "https://93.184.216.34/oobi", "root_aid_enrollment": false,
+		"public_key_b64": pubB64,
+	}
+	canonical, _ := sign.CanonicalBody(body)
+	body["signature"] = base64.StdEncoding.EncodeToString(ed25519.Sign(priv, canonical))
+	raw, _ := json.Marshal(body)
+
+	r := httptest.NewRequest(http.MethodPost, "/enroll", bytes.NewReader(raw))
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("the genuine owner was refused: %d %s", w.Code, w.Body.String())
+	}
 }
