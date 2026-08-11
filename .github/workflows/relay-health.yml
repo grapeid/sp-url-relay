@@ -1,0 +1,140 @@
+# Watches the deployed relay and raises a GitHub issue when it needs attention.
+#
+# Fly has no alerting of its own, and its managed Grafana cannot mint an API
+# token, so there is nowhere to put an alert rule. This does the same job with
+# what is available: query Fly's Prometheus on a schedule, and use an issue as
+# the notification channel — GitHub already emails on issue activity.
+#
+# The relay cannot scale horizontally (SQLite on a volume, session hub in
+# process), so the remedy for memory pressure is a vertical resize. Note that
+# `fly scale memory` is undone by the next deploy unless fly.toml changes too.
+
+name: Relay health
+
+on:
+  schedule:
+    # Every 15 minutes. The relay idles far below the threshold, so this is a
+    # watch for something going wrong rather than a tight control loop.
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+env:
+  APP: grapeid-url-relay
+  PUBLIC_URL: https://relay.grapeid.org
+  # Fraction of memory still available, below which this raises an issue.
+  MIN_AVAILABLE: "0.20"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check memory and reachability
+        id: probe
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          set -uo pipefail
+
+          if [ -z "${FLY_API_TOKEN:-}" ]; then
+            echo "state=unknown" >> "$GITHUB_OUTPUT"
+            echo "reason=FLY_API_TOKEN is not set, so memory cannot be read" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # The Prometheus endpoint wants "FlyV1 <token>", not "Bearer".
+          q() {
+            curl -sS -m 30 -H "Authorization: FlyV1 ${FLY_API_TOKEN}" \
+              --get --data-urlencode "query=$1" \
+              "https://api.fly.io/prometheus/personal/api/v1/query" \
+              | jq -r '.data.result[0].value[1] // empty'
+          }
+
+          AVAIL=$(q "fly_instance_memory_mem_available{app=\"${APP}\"}")
+          TOTAL=$(q "fly_instance_memory_mem_total{app=\"${APP}\"}")
+          CODE=$(curl -sS -m 30 -o /dev/null -w '%{http_code}' "${PUBLIC_URL}/health" || echo 000)
+
+          PROBLEMS=""
+
+          if [ "$CODE" != "200" ]; then
+            PROBLEMS="${PROBLEMS}- \`${PUBLIC_URL}/health\` returned \`${CODE}\`, not 200.\n"
+          fi
+
+          if [ -z "$AVAIL" ] || [ -z "$TOTAL" ] || [ "$TOTAL" = "0" ]; then
+            # Absent metrics are themselves worth knowing about: it means the
+            # machine is not reporting, which a memory threshold would miss.
+            PROBLEMS="${PROBLEMS}- Fly reported no memory metrics for \`${APP}\`; the machine may be down or the token may have expired.\n"
+            RATIO="unknown"
+          else
+            RATIO=$(awk -v a="$AVAIL" -v t="$TOTAL" 'BEGIN{printf "%.3f", a/t}')
+            LOW=$(awk -v r="$RATIO" -v m="${MIN_AVAILABLE}" 'BEGIN{print (r < m) ? 1 : 0}')
+            if [ "$LOW" = "1" ]; then
+              PCT=$(awk -v r="$RATIO" 'BEGIN{printf "%.1f", r*100}')
+              PROBLEMS="${PROBLEMS}- Only ${PCT}% of memory is available (threshold ${MIN_AVAILABLE}). Resize with \`fly scale memory <mb> --app ${APP}\`, and change \`[[vm]] memory\` in fly.toml too or the next deploy will undo it.\n"
+            fi
+          fi
+
+          echo "ratio=${RATIO}" >> "$GITHUB_OUTPUT"
+          echo "code=${CODE}" >> "$GITHUB_OUTPUT"
+          if [ -n "$PROBLEMS" ]; then
+            echo "state=alert" >> "$GITHUB_OUTPUT"
+            { echo "reason<<EOF"; printf "%b" "$PROBLEMS"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+          else
+            echo "state=ok" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open, leave, or close the alert issue
+        uses: actions/github-script@v7
+        env:
+          STATE: ${{ steps.probe.outputs.state }}
+          REASON: ${{ steps.probe.outputs.reason }}
+          RATIO: ${{ steps.probe.outputs.ratio }}
+          CODE: ${{ steps.probe.outputs.code }}
+        with:
+          script: |
+            const label = 'relay-alert';
+            const title = 'Relay needs attention';
+            const { STATE, REASON, RATIO, CODE } = process.env;
+
+            const existing = (await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              state: 'open', labels: label,
+            })).data[0];
+
+            if (STATE === 'ok') {
+              // Only speak on recovery. A comment every quarter hour saying
+              // nothing is wrong trains everyone to ignore the channel.
+              if (existing) {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner, repo: context.repo.repo,
+                  issue_number: existing.number,
+                  body: `Recovered: health \`${CODE}\`, memory available \`${RATIO}\`.`,
+                });
+                await github.rest.issues.update({
+                  owner: context.repo.owner, repo: context.repo.repo,
+                  issue_number: existing.number, state: 'closed',
+                });
+              }
+              return;
+            }
+
+            const body = [
+              `${REASON}`,
+              '',
+              `Health: \`${CODE}\` · memory available: \`${RATIO}\``,
+              '',
+              'This issue closes itself when the next check passes.',
+            ].join('\n');
+
+            if (existing) {
+              // Already reported. Staying quiet keeps one incident to one
+              // thread instead of ninety-six notifications a day.
+              return;
+            }
+
+            await github.rest.issues.create({
+              owner: context.repo.owner, repo: context.repo.repo,
+              title, body, labels: [label],
+            });

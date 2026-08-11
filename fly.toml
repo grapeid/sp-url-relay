@@ -1,0 +1,64 @@
+# Fly.io deployment for the M35 url-relay (migrated off Replit Reserved VM).
+#
+# Single machine, always on, SQLite on an attached volume.
+#
+# Do not scale this past one machine. The name/allocation registry is SQLite
+# on a local volume; a second machine gets its own volume and its own copy of
+# the registry, which silently splits enrollment and allocation state.
+
+app = "grapeid-url-relay"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  RELAY_APEX  = "relay.grapeid.org"
+  SQLITE_PATH = "/data/relay.db"
+  LISTEN_ADDR = ":5000"
+  # RELAY_AID is intentionally not set here — see MIGRATION.md. Production
+  # currently advertises the placeholder AID, and that is worth fixing
+  # deliberately rather than inheriting by accident.
+  #
+  # Enrollment is verified by default, in process, with no configuration:
+  # keri-go validates the key log the enrolling agent supplies. There is no
+  # KERI_SERVICE any more. Setting ALLOW_UNVERIFIED_ENROLLMENT=1 turns the
+  # binding check off and lets anyone claim any AID — development only.
+
+[[mounts]]
+  source      = "relay_data"
+  destination = "/data"
+
+[http_service]
+  internal_port        = 5000
+  force_https          = true
+  # Always on. The relay holds long-lived WebSocket tunnels and must accept
+  # inbound traffic for them at any time, so scale-to-zero is not usable here.
+  auto_stop_machines   = false
+  auto_start_machines  = false
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type       = "connections"
+    soft_limit = 200
+    hard_limit = 250
+
+[[http_service.checks]]
+  grace_period  = "10s"
+  interval      = "30s"
+  method        = "GET"
+  path          = "/health"
+  protocol      = "http"
+  timeout       = "5s"
+
+# Cushion against a memory spike. Swapping is slow, but for a service whose
+# steady state is ~10 MB the realistic failure is a burst, and a slow response
+# beats an OOM kill that drops every live tunnel at once.
+swap_size_mb = 256
+
+[[vm]]
+  size   = "shared-cpu-1x"
+  # WARNING: `fly scale memory <n>` is overridden by the next `fly deploy`,
+  # which reapplies this value. If you scale up in an emergency, change this
+  # line too or the next deploy silently scales you back down.
+  memory = "512mb"
