@@ -16,14 +16,35 @@ import (
 
 	"github.com/grapeid/sp-url-relay/internal/allowlist"
 	"github.com/grapeid/sp-url-relay/internal/enroll"
+	"github.com/grapeid/sp-url-relay/internal/enrollverify"
 	"github.com/grapeid/sp-url-relay/internal/hostname"
 	"github.com/grapeid/sp-common/oobi"
 	"github.com/grapeid/sp-url-relay/internal/protocol"
 	"github.com/grapeid/sp-common/sign"
 	"github.com/grapeid/sp-url-relay/internal/store"
 	tunnelpkg "github.com/grapeid/sp-url-relay/internal/tunnel"
-	"github.com/grapeid/sp-common/verify"
 )
+
+// decodeKEL accepts the CESR stream in any of the base64 spellings the agent
+// side might reasonably produce.
+//
+// An absent log is not an error here. Whether a log is required is the
+// verifier's question, and answering it in two places invites them to disagree.
+func decodeKEL(s string) ([]byte, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, nil
+	}
+	for _, enc := range []*base64.Encoding{
+		base64.StdEncoding, base64.RawStdEncoding,
+		base64.URLEncoding, base64.RawURLEncoding,
+	} {
+		if raw, err := enc.DecodeString(s); err == nil {
+			return raw, nil
+		}
+	}
+	return nil, fmt.Errorf("kel_cesr_b64 is not valid base64")
+}
 
 type Config struct {
 	Apex       string
@@ -33,7 +54,7 @@ type Config struct {
 	Logger     *slog.Logger
 	// Verifier binds an enrolling key to its AID. Nil or disabled means
 	// enrollment is open, which is a choice that has to be made explicitly.
-	Verifier verify.Verifier
+	Verifier enrollverify.Verifier
 }
 
 type Server struct {
@@ -91,8 +112,14 @@ func (s *Server) handleDescriptor(w http.ResponseWriter, r *http.Request) {
 		"release_endpoint":       base + "/release",
 		"heartbeat_endpoint":     base + "/heartbeat",
 		"heartbeat_interval_sec": protocol.HeartbeatInterval,
-		"subdomain_alphabet":     "base58",
-		"subdomain_min_len":      protocol.MinHostnameLen,
+		"url_form":               protocol.URLForm,
+		"token_alphabet":         "base58",
+		"token_min_len":          protocol.MinHostnameLen,
+		// Whether this relay binds an enrolling key to its AID, and how to
+		// satisfy it. Published so an agent can tell before it tries.
+		"enrollment_verified": s.cfg.Verifier != nil && s.cfg.Verifier.Enabled(),
+		"enrollment_kel_field": "kel_cesr_b64",
+		"enrollment_kel_format": "cesr",
 		"path_allowlist":         protocol.PathAllowlist,
 		"rate_limits": map[string]int{
 			"allocate_per_min":             protocol.AllocatePerMin,
@@ -108,6 +135,18 @@ type enrollBody struct {
 	OOBI              string `json:"oobi"`
 	RootAIDEnrollment bool   `json:"root_aid_enrollment"`
 	PublicKeyB64      string `json:"public_key_b64"`
+	// KELCESRB64 is the enrolling identity's key event log, as a CESR stream,
+	// base64-encoded for transport. The relay validates it in process; it is
+	// not fetched, because at enrollment the agent has no tunnel yet and may
+	// not be reachable at all. A log is self-verifying, so who carries it
+	// does not matter.
+	//
+	// omitempty is load-bearing: the signature covers the canonical body, so a
+	// field that serialised as "" would change the canonical form and break
+	// every signature produced before this field existed. Omitted when absent,
+	// the old canonicalisation is preserved exactly; sent, it is signed like
+	// everything else.
+	KELCESRB64 string `json:"kel_cesr_b64,omitempty"`
 	// Signature covers the canonical body, made by the key being presented.
 	//
 	// Enrollment used to take none. That mattered more here than it looks:
@@ -168,8 +207,13 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid_signature", err.Error())
 		return
 	}
-	if s.cfg.Verifier != nil {
-		if result := s.cfg.Verifier.Verify(r.Context(), body.EnrollmentAID, body.OOBI, pubKey); s.cfg.Verifier.Enabled() && !result.Verified {
+	if s.cfg.Verifier != nil && s.cfg.Verifier.Enabled() {
+		kel, derr := decodeKEL(body.KELCESRB64)
+		if derr != nil {
+			writeError(w, http.StatusBadRequest, "invalid_kel", derr.Error())
+			return
+		}
+		if result := s.cfg.Verifier.Verify(body.EnrollmentAID, pubKey, kel); !result.Verified {
 			writeError(w, http.StatusForbidden, "key_not_bound_to_aid", result.Reason)
 			return
 		}
@@ -248,7 +292,7 @@ func (s *Server) handleAllocate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "hostname_error", err.Error())
 		return
 	}
-	publicHost := hostToken + "." + s.cfg.Apex
+	publicHost := s.publicID(hostToken)
 	now := time.Now().UTC().Format(time.RFC3339)
 	if err := s.cfg.Store.SaveAllocation(store.Allocation{
 		AllocationToken: token, RAID: body.RAID, PublicHostname: publicHost,
@@ -347,35 +391,52 @@ func (s *Server) handleTunnelWS(w http.ResponseWriter, r *http.Request) {
 	s.hub.Register(enrollmentAID, conn)
 }
 
+// handleInbound routes a public request to the agent that owns it.
+//
+// The allocation token is the FIRST PATH SEGMENT, not a subdomain:
+//
+//	https://relay.grapeid.org/k7f2pq9r/E.../did.json
+//	                          ^token^  ^--- forwarded to the agent ---^
+//
+// Keeping the token in the path instead of in the hostname keeps it inside
+// TLS. A subdomain would publish it in every DNS query and in the cleartext
+// TLS SNI field, handing the pairwise identifier to the DNS operator and to
+// any passive network observer — the exact leak Decision 6 set out to avoid.
+// It also means one certificate and no wildcard DNS.
+//
+// Everything after the token is forwarded verbatim, so agents serve exactly
+// the paths they served under the subdomain scheme.
 func (s *Server) handleInbound(w http.ResponseWriter, r *http.Request) {
-	host := r.Host
-	if idx := strings.Index(host, ":"); idx != -1 {
-		host = host[:idx]
+	trimmed := strings.Trim(r.URL.Path, "/")
+	if trimmed == "" {
+		w.Write([]byte("url-relay M35 (SEAM-16)"))
+		return
 	}
-	sub := strings.TrimSuffix(host, "."+s.cfg.Apex)
-	if sub == host || sub == "" || sub == s.cfg.Apex {
-		if r.URL.Path == "/" {
-			w.Write([]byte("url-relay M35 (SEAM-16)"))
-			return
-		}
+	parts := strings.SplitN(trimmed, "/", 2)
+	token := parts[0]
+	rest := "/"
+	if len(parts) == 2 {
+		rest = "/" + parts[1]
+	}
+	if !hostname.Valid(token) {
 		http.NotFound(w, r)
 		return
 	}
-	if !s.allowInbound(sub) {
+	if !s.allowInbound(token) {
 		writeError(w, http.StatusTooManyRequests, "rate_limited", "")
 		return
 	}
-	quarantined, _ := s.cfg.Store.IsQuarantined(sub + "." + s.cfg.Apex)
+	quarantined, _ := s.cfg.Store.IsQuarantined(s.publicID(token))
 	if quarantined {
 		http.NotFound(w, r)
 		return
 	}
-	alloc, _ := s.cfg.Store.GetAllocationByHostname(host)
+	alloc, _ := s.cfg.Store.GetAllocationByHostname(s.publicID(token))
 	if alloc == nil {
 		http.NotFound(w, r)
 		return
 	}
-	if !allowlist.Allowed(r.Method, r.URL.Path) {
+	if !allowlist.Allowed(r.Method, rest) {
 		http.NotFound(w, r)
 		return
 	}
@@ -394,7 +455,7 @@ func (s *Server) handleInbound(w http.ResponseWriter, r *http.Request) {
 	}
 	req := tunnelpkg.RequestFrame{
 		T: "req", StreamID: streamID, RAID: alloc.RAID,
-		Method: r.Method, Path: r.URL.Path, Headers: headers,
+		Method: r.Method, Path: rest, Headers: headers,
 	}
 	res, err := sess.Forward(req, 30*time.Second)
 	if err != nil {
@@ -452,13 +513,20 @@ func (s *Server) verifySigned(enrollmentAID string, signed signedBody, full inte
 	return sign.VerifyEd25519(e.PublicKeyB64, signed.Signature, canonical)
 }
 
+// publicID is the stored, canonical public identity of an allocation:
+// "relay.grapeid.org/k7f2pq9r". Prefixing "https://" yields the public URL,
+// and the did:web form is did:web:relay.grapeid.org:k7f2pq9r.
+func (s *Server) publicID(token string) string {
+	return s.cfg.Apex + "/" + token
+}
+
 func (s *Server) mintHostname() (string, error) {
 	for i := 0; i < 20; i++ {
 		token, err := hostname.Mint(10)
 		if err != nil {
 			return "", err
 		}
-		full := token + "." + s.cfg.Apex
+		full := s.publicID(token)
 		q, _ := s.cfg.Store.IsQuarantined(full)
 		if q {
 			continue

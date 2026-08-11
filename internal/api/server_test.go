@@ -2,7 +2,6 @@ package api
 
 import (
 	"bytes"
-	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
@@ -14,7 +13,7 @@ import (
 
 	"github.com/grapeid/sp-common/sign"
 	"github.com/grapeid/sp-url-relay/internal/store"
-	"github.com/grapeid/sp-common/verify"
+	"github.com/grapeid/sp-url-relay/internal/enrollverify"
 )
 
 func testServer(t *testing.T) (*Server, store.Store) {
@@ -158,15 +157,15 @@ type stubVerifier struct{ bound map[string]string }
 
 func (stubVerifier) Enabled() bool { return true }
 
-func (v stubVerifier) Verify(_ context.Context, aid, _, publicKeyB64 string) verify.Result {
+func (v stubVerifier) Verify(aid, publicKeyB64 string, _ []byte) enrollverify.Result {
 	real, ok := v.bound[aid]
 	if !ok {
-		return verify.Result{Reason: "no KEL published for that AID"}
+		return enrollverify.Result{Reason: "no KEL published for that AID"}
 	}
 	if real != publicKeyB64 {
-		return verify.Result{Reason: "not this identity's current signing key"}
+		return enrollverify.Result{Reason: "not this identity's current signing key"}
 	}
-	return verify.Result{Verified: true, CurrentKey: real}
+	return enrollverify.Result{Verified: true}
 }
 
 func enrollingServer(t *testing.T, bound map[string]string) *Server {
