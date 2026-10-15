@@ -1,38 +1,49 @@
-# grapeid-url-relay — Fly.io image.
+# syntax=docker/dockerfile:1.7
 #
-# Written 2026-10-15 to close a gap, not copied from the original: the running
-# app declares build.dockerfile = "Dockerfile" and no Dockerfile had ever been
-# committed, so the deployed binary could not be rebuilt from this repository.
-# The image on Fly is a multi-stage Go build carrying only the binary, so there
-# was no copy to recover either.
+# Fly.io image for the M35 url-relay.
 #
-# This reproduces what the deployment expects rather than what the original
-# author wrote, which is unknowable: a static binary from ./cmd/relay, serving
-# LISTEN_ADDR with its SQLite database on the mounted volume. Verify a build
-# from this file behaves identically before deploying it over the running one.
-FROM golang:1.24-alpine AS build
-WORKDIR /src
+# Chisel is deliberately absent. scripts/start.sh launched a second chisel
+# process on :8080 for the pre-M35 tunnel protocol, but production no longer
+# serves that protocol at all (/claim-name returns 404 on relay.grapeid.org)
+# and the M35 data plane is the server's own /tunnel WebSocket. Carrying
+# chisel forward would also carry its hardcoded `--auth user:secret-token`.
 
+FROM golang:1.25-alpine AS build
+
+RUN apk add --no-cache git ca-certificates
+
+WORKDIR /src
+ENV CGO_ENABLED=0 \
+    GOOS=linux \
+    GOPRIVATE=github.com/grapeid/* \
+    GONOSUMDB=github.com/grapeid/* \
+    GOSUMDB=off
+
+# github.com/grapeid/sp-common is a private module, so the build needs a token.
+# Pass it with:  fly deploy --build-secret gh_token=<PAT with repo:read>
+# The credential is confined to this stage and never reaches the final image.
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=secret,id=gh_token \
+    git config --global url."https://x-access-token:$(cat /run/secrets/gh_token)@github.com/".insteadOf "https://github.com/" && \
+    go mod download && \
+    git config --global --remove-section url."https://x-access-token:$(cat /run/secrets/gh_token)@github.com/"
 
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -o /relay ./cmd/relay
+RUN go build -trimpath -ldflags="-s -w" -o /out/relay ./cmd/relay
 
-FROM alpine:3.21
-RUN apk add --no-cache ca-certificates
-WORKDIR /app
+# Proves the Windows-only TempDir cleanup failures are not real test failures.
+FROM build AS test
+RUN go test ./...
 
-# Defaults match the Fly app's own env; fly.toml sets these explicitly too, so
-# the image is runnable on its own without depending on them being passed.
-ENV LISTEN_ADDR=":5000"
-ENV SQLITE_PATH="/data/relay.db"
+FROM alpine:3.20 AS runtime
+RUN apk add --no-cache ca-certificates tzdata && \
+    adduser -D -u 10001 relay
 
-VOLUME ["/data"]
-COPY --from=build /relay /app/relay
+COPY --from=build /out/relay /usr/local/bin/relay
+
+# The volume is mounted here; SQLITE_PATH points into it.
+RUN mkdir -p /data && chown relay:relay /data
+USER relay
 
 EXPOSE 5000
-HEALTHCHECK --interval=30s --timeout=5s \
-  CMD wget -qO- http://127.0.0.1:5000/health || exit 1
-
-CMD ["/app/relay"]
+ENTRYPOINT ["/usr/local/bin/relay"]
