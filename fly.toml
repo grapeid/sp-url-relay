@@ -1,0 +1,53 @@
+# Fly.io config — grapeid-url-relay.
+#
+# Recovered 2026-10-15 with `fly config save` and then CORRECTED. What that
+# command returns is the last RELEASE config, and this app's live Machine was
+# changed through the Machines API after that release, so the recovered file
+# still said auto_stop_machines = "off", auto_start_machines = false and
+# min_machines_running = 1. Deploying it unaltered would have put the app back
+# to always-on and, worse, left it unable to wake. The values below are the
+# ones actually running.
+app = "grapeid-url-relay"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  LISTEN_ADDR = ":5000"
+  RELAY_APEX = "relay.grapeid.org"
+  SQLITE_PATH = "/data/relay.db"
+
+# The relay's identity and its short-link table live here. Losing the volume
+# loses both, and the links it has already handed out stop resolving.
+[mounts]
+  source = "relay_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 5000
+  force_https = true
+  # Scales to zero. The Fly proxy holds an inbound request and starts the
+  # Machine, which costs about 1.6s on the first call and nothing after.
+  # auto_start_machines was false before 2026-10-15, which would have made
+  # scale-to-zero a one-way trip.
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [http_service.concurrency]
+    type = "connections"
+    hard_limit = 250
+    soft_limit = 200
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/health"
+    protocol = "http"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
