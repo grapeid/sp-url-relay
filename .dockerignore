@@ -1,11 +1,5 @@
 .git
-.agents
-attached_assets
-docs
 bin/
 data/
 *.log
-Caddyfile
-.replit
-replit.md
-scripts/
+*.db
