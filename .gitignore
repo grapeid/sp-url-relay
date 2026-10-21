@@ -1,3 +1,16 @@
-bin/
-Caddyfile
+# Build output
+/relay
+/bin/
+
+# Local state: the relay's database and its certificate cache
+/data/
+*.db
+*.db-shm
+*.db-wal
+
 *.log
+.DS_Store
+
+# Agent instruction files are local to each contributor
+AGENTS.md
+CLAUDE.md
