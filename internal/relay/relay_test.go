@@ -21,7 +21,6 @@ import (
 
 	"github.com/gorilla/websocket"
 	keri "github.com/grapeid/keri-go"
-	"github.com/grapeid/sp-common/sign"
 
 	"github.com/LF-Decentralized-Trust-labs/identity-bot/identity-agent-core/relayproto"
 
@@ -138,6 +137,8 @@ func (f *fakeResolver) set(name, value string) {
 
 type harness struct {
 	t        *testing.T
+	tweak    func(*Config)
+	logs     *syncBuffer
 	mode     relayproto.Mode
 	dbPath   string
 	st       *store.Store
@@ -150,11 +151,34 @@ type harness struct {
 const apex = "127.0.0.1"
 
 func newHarness(t *testing.T, mode relayproto.Mode) *harness {
+	return newHarnessWith(t, mode, nil)
+}
+
+// newHarnessWith starts a relay whose configuration tweak adjusts.
+func newHarnessWith(t *testing.T, mode relayproto.Mode, tweak func(*Config)) *harness {
 	t.Helper()
 	h := &harness{t: t, mode: mode, dbPath: filepath.Join(t.TempDir(), "relay.db"),
-		resolver: &fakeResolver{records: map[string][]string{}}}
+		resolver: &fakeResolver{records: map[string][]string{}}, tweak: tweak, logs: &syncBuffer{}}
 	h.start()
 	return h
+}
+
+// syncBuffer collects the relay's log lines.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 // start runs a relay on the harness's database: called again, it is the same
@@ -165,9 +189,13 @@ func (h *harness) start() {
 	if err != nil {
 		h.t.Fatal(err)
 	}
-	srv, err := New(Config{Mode: h.mode, Apex: apex, Store: st, Resolver: h.resolver,
+	cfg := Config{Mode: h.mode, Apex: apex, Store: st, Resolver: h.resolver,
 		ReservedNames: []string{"examplebrand"}, PerIdentity: 2,
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+		Logger: slog.New(slog.NewTextHandler(h.logs, nil))}
+	if h.tweak != nil {
+		h.tweak(&cfg)
+	}
+	srv, err := New(cfg)
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -235,7 +263,7 @@ func signedBody(t *testing.T, id *identity, op string, fields map[string]any) []
 	for k, v := range fields {
 		m[k] = v
 	}
-	body, err := sign.CanonicalBody(m)
+	body, err := canonicalControl(m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -544,14 +572,17 @@ func TestAPublicNameIsClaimedAndServesEverything(t *testing.T) {
 		t.Fatalf("claim: %d %v", status, m)
 	}
 
-	resp, _ := h.do("GET", "/acme", "", nil)
-	if resp.StatusCode != http.StatusPermanentRedirect || resp.Header.Get("Location") != "/acme/" {
-		t.Fatalf("the bare name: %d %q", resp.StatusCode, resp.Header.Get("Location"))
-	}
-	resp, m := h.do("POST", "/acme/api/settings?view=all", "", strings.NewReader("{}"))
+	// Each name is its own host, so its own browser origin.
+	resp, m := h.do("POST", "/api/settings?view=all", "acme."+apex, strings.NewReader("{}"))
 	if resp.StatusCode != 200 || m["path"] != "/api/settings" || m["query"] != "view=all" ||
-		m["allocation"] != "acme" || m["prefix"] != "/acme" {
+		m["allocation"] != "acme" || m["host"] != "acme."+apex || m["prefix"] != "" {
 		t.Fatalf("a public address passes everything to the Identity Agent's gate: %d %v", resp.StatusCode, m)
+	}
+	if resp, _ := h.do("GET", "/acme/api/settings", "", nil); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("a name served as a path under the apex shares one origin with every other name: %d", resp.StatusCode)
+	}
+	if resp, _ := h.do("GET", "/", "nobody."+apex, nil); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("an unclaimed name: %d, want 404", resp.StatusCode)
 	}
 }
 
@@ -614,7 +645,8 @@ func TestAWebsocketOpensThroughAPublicName(t *testing.T) {
 	h.control(id, "/names/claim", "claim-name", map[string]any{"name": "acme"})
 
 	d := websocket.Dialer{TLSClientConfig: h.tlsConfig()}
-	c, _, err := d.Dial("wss"+strings.TrimPrefix(h.ts.URL, "https")+"/acme/api/ws/events", nil)
+	c, _, err := d.Dial("wss"+strings.TrimPrefix(h.ts.URL, "https")+"/api/ws/events",
+		http.Header{"Host": []string{"acme." + apex}})
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}

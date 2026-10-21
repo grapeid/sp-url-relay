@@ -1,22 +1,20 @@
 package relay
 
 import (
-	"context"
+	"bytes"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	keri "github.com/grapeid/keri-go"
-	"github.com/grapeid/sp-common/sign"
 
 	"github.com/LF-Decentralized-Trust-labs/identity-bot/identity-agent-core/relayproto"
 
@@ -25,9 +23,12 @@ import (
 
 var b64 = base64.RawURLEncoding
 
-// A control request is a JSON object signed by an identifier's current key,
-// as ADR-048 §8 keeps ADR-024's allocate and release requests: Ed25519 over the
-// canonical body (keys sorted, "signature" removed), base64url. Every request
+// A control request is a JSON object of strings signed by an identifier's
+// current key, as ADR-048 §8 keeps ADR-024's allocate and release requests. It
+// is signed the way the relay protocol signs an admission statement: Ed25519
+// over the object's canonical JSON (every field but "signature", keys sorted,
+// no whitespace, no HTML escaping), base64url without padding. Every field is
+// printable ASCII, so the signed bytes have one spelling. Every request
 // carries:
 //
 //	op         which request this is, so a signature for one cannot be used
@@ -78,18 +79,30 @@ func (s *Server) handleControl(w http.ResponseWriter, r *http.Request, h control
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST only")
 		return
 	}
-	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
-	if !s.control.Allow(ip) {
-		writeError(w, http.StatusTooManyRequests, "rate_limited", "too many requests")
+	// A request body has a few seconds to arrive, not as long as it likes.
+	http.NewResponseController(w).SetReadDeadline(s.cfg.Now().Add(controlReadTimeout))
+	ip := clientIP(r)
+	if !s.controlIP.Allow(ip) {
+		writeError(w, http.StatusTooManyRequests, "rate_limited", "too many requests from this address")
 		return
 	}
 	c, status, err := s.verifyControl(r, h.op)
 	if err != nil {
-		s.cfg.Logger.Info("control request refused", "op", h.op, "aid", fmt.Sprintf("%q", c.aid), "ip", ip, "reason", err.Error())
+		s.cfg.Logger.Info("control request refused", "op", h.op, "ip", ip, "reason", err.Error())
 		writeError(w, status, "refused", err.Error())
 		return
 	}
-	s.cfg.Logger.Info("control request", "op", h.op, "aid", c.aid)
+	if !s.controlID.Allow(c.aid) {
+		writeError(w, http.StatusTooManyRequests, "rate_limited", "too many requests from this identity")
+		return
+	}
+	if s.cfg.Mode == relayproto.ModePrivate {
+		// Which identity asked for which private address is exactly what this
+		// relay does not keep, in its database or its logs.
+		s.cfg.Logger.Info("control request", "op", h.op)
+	} else {
+		s.cfg.Logger.Info("control request", "op", h.op, "aid", c.aid)
+	}
 	h.fn(w, r, c)
 }
 
@@ -145,7 +158,7 @@ func (s *Server) verifyControl(r *http.Request, op string) (controlRequest, int,
 	if err != nil {
 		return c, http.StatusBadRequest, fmt.Errorf("the signature is not base64url")
 	}
-	body, err := sign.CanonicalBody(c.fields)
+	body, err := canonicalControl(c.fields)
 	if err != nil {
 		return c, http.StatusBadRequest, err
 	}
@@ -154,7 +167,12 @@ func (s *Server) verifyControl(r *http.Request, op string) (controlRequest, int,
 	}
 	// Recorded only once it has verified, so nobody can burn somebody else's
 	// nonce with a forgery.
-	if !s.nonces.add(c.aid+" "+nonce, at.Add(relayproto.ClockSkew), now) {
+	digest := sha256.Sum256([]byte(c.aid + " " + nonce))
+	fresh, err := s.cfg.Store.UseNonce(hex.EncodeToString(digest[:]), at.Add(relayproto.ClockSkew))
+	if err != nil {
+		return c, http.StatusInternalServerError, fmt.Errorf("could not record the request")
+	}
+	if !fresh {
 		return c, http.StatusConflict, fmt.Errorf("this request has been seen before")
 	}
 	return c, 0, nil
@@ -173,6 +191,30 @@ func currentKey(kel []byte, aid string) (string, error) {
 		return "", fmt.Errorf("the key event log held for %q does not establish one signing key", aid)
 	}
 	return st.Keys[0], nil
+}
+
+// canonicalControl is the byte string a control request is signed over: the
+// relay protocol's canonical form (ADR-048 §3), keys sorted, no whitespace,
+// no HTML escaping, with "signature" left out.
+func canonicalControl(fields map[string]any) ([]byte, error) {
+	m := make(map[string]string, len(fields))
+	for k, v := range fields {
+		if k == "signature" {
+			continue
+		}
+		str, ok := v.(string)
+		if !ok {
+			return nil, fmt.Errorf("every field is a string")
+		}
+		m[k] = str
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(m); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
 }
 
 func printableASCII(s string) bool {
@@ -200,6 +242,13 @@ func (s *Server) handleAllocate(w http.ResponseWriter, _ *http.Request, c contro
 	commitment := c.str("commitment")
 	if raw, err := b64.DecodeString(commitment); err != nil || len(raw) != sha256.Size {
 		writeError(w, http.StatusBadRequest, "invalid_commitment", "commitment is base64url SHA-256 of the allocation's secret")
+		return
+	}
+	s.boundMu.RLock()
+	held := s.boundCount[c.aid]
+	s.boundMu.RUnlock()
+	if held >= s.cfg.PrivatePerSession {
+		writeError(w, http.StatusForbidden, "quota", fmt.Sprintf("an identity may hold %d addresses here at once", s.cfg.PrivatePerSession))
 		return
 	}
 	label := relayproto.NewAllocationToken()
@@ -247,6 +296,13 @@ func (s *Server) handleBind(w http.ResponseWriter, _ *http.Request, c controlReq
 		writeError(w, status, "refused", err.Error())
 		return
 	}
+	s.boundMu.RLock()
+	held, already := s.boundCount[c.aid], s.bound[label] == c.aid
+	s.boundMu.RUnlock()
+	if !already && held >= s.cfg.PrivatePerSession {
+		writeError(w, http.StatusForbidden, "quota", fmt.Sprintf("an identity may hold %d addresses here at once", s.cfg.PrivatePerSession))
+		return
+	}
 	s.bind(label, c.aid)
 	writeJSON(w, http.StatusOK, map[string]any{"allocation": label, "public_url": "https://" + s.cfg.Apex + "/" + label})
 }
@@ -262,21 +318,41 @@ func (s *Server) handleRelease(w http.ResponseWriter, _ *http.Request, c control
 		writeError(w, http.StatusInternalServerError, "store_error", "could not release the allocation")
 		return
 	}
-	s.boundMu.Lock()
-	delete(s.bound, label)
-	s.boundMu.Unlock()
+	s.unbind(label)
 	writeJSON(w, http.StatusOK, map[string]any{"allocation": label, "released": true})
 }
 
 func (s *Server) bind(label, aid string) {
 	s.boundMu.Lock()
+	defer s.boundMu.Unlock()
+	if prev, ok := s.bound[label]; ok {
+		if prev == aid {
+			return
+		}
+		s.boundCount[prev]--
+	}
 	s.bound[label] = aid
-	s.boundMu.Unlock()
+	s.boundCount[aid]++
+}
+
+func (s *Server) unbind(label string) {
+	s.boundMu.Lock()
+	defer s.boundMu.Unlock()
+	if prev, ok := s.bound[label]; ok {
+		delete(s.bound, label)
+		if s.boundCount[prev]--; s.boundCount[prev] <= 0 {
+			delete(s.boundCount, prev)
+		}
+	}
 }
 
 // --- public mode ----------------------------------------------------------
 
-func (s *Server) handleClaimName(w http.ResponseWriter, _ *http.Request, c controlRequest) {
+func (s *Server) handleClaimName(w http.ResponseWriter, r *http.Request, c controlRequest) {
+	if !s.claimIP.Allow(clientIP(r)) {
+		writeError(w, http.StatusTooManyRequests, "rate_limited", "too many name claims from this address")
+		return
+	}
 	name := c.str("name")
 	switch {
 	case !validName(name):
@@ -327,9 +403,9 @@ func (s *Server) handleRequestDomain(w http.ResponseWriter, _ *http.Request, c c
 		writeError(w, http.StatusBadRequest, "invalid_domain", "not a domain this relay can serve")
 		return
 	}
-	switch err := s.cfg.Store.RequestDomain(domain, c.aid, s.cfg.PerIdentity); {
+	switch err := s.cfg.Store.RequestDomain(domain, c.aid, s.cfg.PerIdentity, DomainPendingFor); {
 	case errors.Is(err, store.ErrTaken):
-		writeError(w, http.StatusConflict, "taken", "another identity has asked for that domain")
+		writeError(w, http.StatusConflict, "taken", "another identity holds that domain; if it is yours, publish the TXT record below and send verify-domain")
 		return
 	case errors.Is(err, store.ErrQuota):
 		writeError(w, http.StatusForbidden, "quota", fmt.Sprintf("an identity may hold %d domains here", s.cfg.PerIdentity))
@@ -346,39 +422,43 @@ func (s *Server) handleRequestDomain(w http.ResponseWriter, _ *http.Request, c c
 }
 
 // handleVerifyDomain activates a custom domain once its DNS carries the TXT
-// record binding it to the identity. Only then may the relay request a
-// certificate for it (HostAllowed).
+// record binding it to the identity. Only then is it served, and only then may
+// the relay request a certificate for it (HostAllowed). The proof decides who
+// holds a domain, not who asked first: it takes over another identity's
+// unproved request, and a proof that no longer holds loses to one that does.
 func (s *Server) handleVerifyDomain(w http.ResponseWriter, r *http.Request, c controlRequest) {
 	domain := strings.ToLower(c.str("domain"))
-	d, err := s.cfg.Store.Domain(domain)
-	switch {
-	case errors.Is(err, store.ErrNotFound):
-		writeError(w, http.StatusNotFound, "not_found", "request the domain first")
-		return
-	case err != nil:
-		writeError(w, http.StatusInternalServerError, "store_error", "could not read the domain")
-		return
-	case d.AID != c.aid:
-		writeError(w, http.StatusForbidden, "not_yours", "another identity asked for that domain")
+	if !validDomain(domain, s.cfg.Apex) {
+		writeError(w, http.StatusBadRequest, "invalid_domain", "not a domain this relay can serve")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-	records, err := s.cfg.Resolver.LookupTXT(ctx, txtName(domain))
-	proved := false
-	if err == nil {
-		for _, rec := range records {
-			if strings.TrimSpace(rec) == txtValue(c.aid) {
-				proved = true
-			}
-		}
+	if !s.domainCheckID.Allow(c.aid) || !s.domainCheck.Allow("relay") {
+		writeError(w, http.StatusTooManyRequests, "rate_limited", "too many domain checks; try again in a minute")
+		return
 	}
-	if !proved {
+	if !s.proves(r.Context(), domain, c.aid) {
 		writeError(w, http.StatusForbidden, "unproven",
 			fmt.Sprintf("TXT %s does not carry %q yet", txtName(domain), txtValue(c.aid)))
 		return
 	}
-	if err := s.cfg.Store.MarkDomainVerified(domain, c.aid); err != nil {
+	err := s.cfg.Store.VerifyDomainFor(domain, c.aid, s.cfg.PerIdentity)
+	if errors.Is(err, store.ErrTaken) {
+		// Proved by another identity before. Its proof is gone if this one
+		// now holds; check, and let the current proof win.
+		if d, derr := s.cfg.Store.Domain(domain); derr == nil && !s.proves(r.Context(), domain, d.AID) {
+			if err = s.cfg.Store.UnverifyDomain(domain); err == nil {
+				err = s.cfg.Store.VerifyDomainFor(domain, c.aid, s.cfg.PerIdentity)
+			}
+		}
+	}
+	switch {
+	case errors.Is(err, store.ErrTaken):
+		writeError(w, http.StatusConflict, "taken", "another identity has proved that domain")
+		return
+	case errors.Is(err, store.ErrQuota):
+		writeError(w, http.StatusForbidden, "quota", fmt.Sprintf("an identity may hold %d domains here", s.cfg.PerIdentity))
+		return
+	case err != nil:
 		writeError(w, http.StatusInternalServerError, "store_error", "could not record the proof")
 		return
 	}
@@ -419,13 +499,13 @@ func (s *Server) handleDescriptor(w http.ResponseWriter, _ *http.Request) {
 		"url_form":        "path",
 		"control_signing": map[string]any{
 			"fields":    []string{"op", "relay", "signed_by", "t", "nonce", "signature"},
-			"canonical": "JSON, keys sorted, signature removed",
-			"signature": "Ed25519 by the key the identifier's key event log names now, base64url",
+			"canonical": "JSON of string fields, signature removed, keys sorted, no whitespace, no HTML escaping",
+			"signature": "Ed25519 by the key the identifier's key event log names now, base64url without padding",
 		},
 		"limits": map[string]any{
 			"names_per_identity":   s.cfg.PerIdentity,
 			"domains_per_identity": s.cfg.PerIdentity,
-			"control_per_minute":   ControlRequestsPerMinute,
+			"control_per_minute":   controlPerIdentity,
 		},
 	})
 }
@@ -438,35 +518,4 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, code, msg string) {
 	writeJSON(w, status, map[string]string{"error": code, "message": msg})
-}
-
-// --- nonces ---------------------------------------------------------------
-
-// nonceCache remembers each accepted request's nonce until the request could
-// no longer be fresh.
-type nonceCache struct {
-	mu        sync.Mutex
-	seen      map[string]time.Time
-	lastSweep time.Time
-}
-
-func newNonceCache() *nonceCache { return &nonceCache{seen: map[string]time.Time{}} }
-
-// add records key until expiry. It reports false if key is already recorded.
-func (n *nonceCache) add(key string, expiry, now time.Time) bool {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	if now.Sub(n.lastSweep) > time.Minute {
-		for k, until := range n.seen {
-			if now.After(until) {
-				delete(n.seen, k)
-			}
-		}
-		n.lastSweep = now
-	}
-	if until, ok := n.seen[key]; ok && !now.After(until) {
-		return false
-	}
-	n.seen[key] = expiry
-	return true
 }

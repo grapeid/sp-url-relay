@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -55,13 +56,17 @@ func run(logger *slog.Logger) error {
 	apex := env("RELAY_APEX", "")
 	dataDir := env("RELAY_DATA_DIR", "./data")
 	addr := env("RELAY_LISTEN_ADDR", ":443")
-	perIdentity, err := envInt("RELAY_PER_IDENTITY", relay.DefaultPerIdentity)
-	if err != nil {
-		return err
-	}
-	maxSessions, err := envInt("RELAY_MAX_SESSIONS", 0)
-	if err != nil {
-		return err
+	var perIdentity, maxSessions, perIP, maxStreams, privatePer, memoryMB int
+	for name, p := range map[string]*int{
+		"RELAY_PER_IDENTITY": &perIdentity, "RELAY_MAX_SESSIONS": &maxSessions,
+		"RELAY_SESSIONS_PER_IP": &perIP, "RELAY_MAX_STREAMS": &maxStreams,
+		"RELAY_PRIVATE_PER_SESSION": &privatePer, "RELAY_MEMORY_LIMIT_MB": &memoryMB,
+	} {
+		v, err := envInt(name, 0)
+		if err != nil {
+			return err
+		}
+		*p = v
 	}
 	var reserved []string
 	if v := env("RELAY_RESERVED_NAMES", ""); v != "" {
@@ -79,20 +84,26 @@ func run(logger *slog.Logger) error {
 
 	srv, err := relay.New(relay.Config{
 		Mode: mode, Apex: apex, Store: st, ReservedNames: reserved,
-		PerIdentity: perIdentity, MaxSessions: maxSessions, Logger: logger,
+		PerIdentity: perIdentity, MaxSessions: maxSessions, SessionsPerIP: perIP,
+		MaxStreams: maxStreams, PrivatePerSession: privatePer,
+		MemoryLimit: uint64(memoryMB) << 20, Logger: logger,
 	})
 	if err != nil {
 		return err
 	}
 
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer cancel()
+
 	var tlsConfig *tls.Config
 	switch env("RELAY_TLS", "acme") {
 	case "acme":
 		tlsConfig, err = srv.ACMETLS(relay.ACMEConfig{
-			CacheDir:     filepath.Join(dataDir, "certs"),
+			Dir:          filepath.Join(dataDir, "certs"),
 			Email:        env("RELAY_ACME_EMAIL", ""),
 			DirectoryURL: env("RELAY_ACME_DIRECTORY", ""),
-		})
+			DNSProvider:  env("RELAY_ACME_DNS_PROVIDER", ""),
+		}, ctx.Done())
 	case "files":
 		tlsConfig, err = relay.FileTLS(env("RELAY_TLS_CERT", ""), env("RELAY_TLS_KEY", ""))
 	default:
@@ -101,48 +112,54 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	go srv.KeepDomainsProved(ctx)
+
+	// PROXY protocol: the platform's TCP proxy announces each client's
+	// address, so per-address limits apply to clients (relay.Listen).
+	useProxyProto := env("RELAY_PROXY_PROTOCOL", "") == "1"
+	listen := func(a string) (net.Listener, error) { return relay.Listen(a, useProxyProto) }
 
 	httpsSrv := &http.Server{
-		Addr: addr, Handler: srv, TLSConfig: tlsConfig,
+		Handler: srv, TLSConfig: tlsConfig,
 		ReadHeaderTimeout: 10 * time.Second,
 		// No write timeout: responses stream, and websockets live long.
 		// relayproto ends a stream on which nothing moves.
 		IdleTimeout: 2 * time.Minute,
 		ErrorLog:    slog.NewLogLogger(logger.Handler(), slog.LevelDebug),
 	}
+	ln, err := listen(addr)
+	if err != nil {
+		return err
+	}
+	errs := make(chan error, 2)
+	go func() { errs <- httpsSrv.ServeTLS(ln, "", "") }()
 	servers := []*http.Server{httpsSrv}
 
-	// An optional plain-HTTP port only sends browsers to HTTPS.
+	// An optional plain-HTTP port only sends browsers to HTTPS, on a host
+	// this relay serves.
 	if httpAddr := env("RELAY_HTTP_ADDR", ""); httpAddr != "" {
-		servers = append(servers, &http.Server{
-			Addr: httpAddr, ReadHeaderTimeout: 10 * time.Second,
-			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				http.Redirect(w, r, "https://"+r.Host+r.URL.RequestURI(), http.StatusPermanentRedirect)
-			}),
-		})
+		hl, err := listen(httpAddr)
+		if err != nil {
+			return err
+		}
+		plain := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: http.HandlerFunc(srv.RedirectToHTTPS)}
+		servers = append(servers, plain)
+		go func() { errs <- plain.Serve(hl) }()
 	}
+	logger.Info("relay starting", "mode", mode, "apex", apex, "addr", addr,
+		"protocol", relayproto.ProtocolVersion, "proxy_protocol", useProxyProto)
 
-	errs := make(chan error, len(servers))
-	go func() { errs <- httpsSrv.ListenAndServeTLS("", "") }()
-	for _, s := range servers[1:] {
-		s := s
-		go func() { errs <- s.ListenAndServe() }()
-	}
-	logger.Info("relay starting", "mode", mode, "apex", apex, "addr", addr, "protocol", relayproto.ProtocolVersion)
-
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
 	select {
 	case err := <-errs:
 		if !errors.Is(err, http.ErrServerClosed) {
 			return err
 		}
-	case <-stop:
+	case <-ctx.Done():
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	shutdown, done := context.WithTimeout(context.Background(), 5*time.Second)
+	defer done()
 	for _, s := range servers {
-		_ = s.Shutdown(ctx)
+		_ = s.Shutdown(shutdown)
 	}
 	return nil
 }
