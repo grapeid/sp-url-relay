@@ -20,6 +20,7 @@ import (
 
 	"github.com/LF-Decentralized-Trust-labs/identity-bot/identity-agent-core/relayproto"
 
+	"github.com/grapeid/sp-url-relay/internal/proxylisten"
 	"github.com/grapeid/sp-url-relay/internal/relay"
 	"github.com/grapeid/sp-url-relay/internal/store"
 )
@@ -82,8 +83,18 @@ func run(logger *slog.Logger) error {
 	}
 	defer st.Close()
 
+	originPulls, err := relay.LoadCertPool(env("RELAY_ORIGIN_PULL_CA", ""))
+	if err != nil {
+		return err
+	}
+	trusted, err := relay.LoadNetworks(env("RELAY_TRUSTED_PROXIES_FILE", ""))
+	if err != nil {
+		return err
+	}
 	srv, err := relay.New(relay.Config{
-		Mode: mode, Apex: apex, Store: st, ReservedNames: reserved,
+		Mode: mode, Apex: apex, ConnectHost: env("RELAY_CONNECT_HOST", ""),
+		OriginPullCAs: originPulls, TrustedProxies: trusted,
+		Store: st, ReservedNames: reserved,
 		PerIdentity: perIdentity, MaxSessions: maxSessions, SessionsPerIP: perIP,
 		MaxStreams: maxStreams, PrivatePerSession: privatePer,
 		MemoryLimit: uint64(memoryMB) << 20, Logger: logger,
@@ -105,7 +116,7 @@ func run(logger *slog.Logger) error {
 			DNSProvider:  env("RELAY_ACME_DNS_PROVIDER", ""),
 		}, ctx.Done())
 	case "files":
-		tlsConfig, err = relay.FileTLS(env("RELAY_TLS_CERT", ""), env("RELAY_TLS_KEY", ""))
+		tlsConfig, err = srv.FileTLS(env("RELAY_TLS_CERT", ""), env("RELAY_TLS_KEY", ""))
 	default:
 		err = errors.New(`RELAY_TLS must be "acme" or "files"`)
 	}
@@ -115,9 +126,9 @@ func run(logger *slog.Logger) error {
 	go srv.KeepDomainsProved(ctx)
 
 	// PROXY protocol: the platform's TCP proxy announces each client's
-	// address, so per-address limits apply to clients (relay.Listen).
+	// address, so per-address limits apply to clients (proxylisten.Listen).
 	useProxyProto := env("RELAY_PROXY_PROTOCOL", "") == "1"
-	listen := func(a string) (net.Listener, error) { return relay.Listen(a, useProxyProto) }
+	listen := func(a string) (net.Listener, error) { return proxylisten.Listen(a, useProxyProto) }
 
 	httpsSrv := &http.Server{
 		Handler: srv, TLSConfig: tlsConfig,
@@ -131,7 +142,7 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	errs := make(chan error, 2)
+	errs := make(chan error, 3)
 	go func() { errs <- httpsSrv.ServeTLS(ln, "", "") }()
 	servers := []*http.Server{httpsSrv}
 
@@ -145,6 +156,21 @@ func run(logger *slog.Logger) error {
 		plain := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: http.HandlerFunc(srv.RedirectToHTTPS)}
 		servers = append(servers, plain)
 		go func() { errs <- plain.Serve(hl) }()
+	}
+	// An optional loopback-only endpoint answering whether this relay serves a
+	// host, for an SNI router in front of it (cmd/snirouter).
+	if adminAddr := env("RELAY_ADMIN_ADDR", ""); adminAddr != "" {
+		host, _, err := net.SplitHostPort(adminAddr)
+		if err != nil || !net.ParseIP(host).IsLoopback() {
+			return errors.New("RELAY_ADMIN_ADDR must be a loopback address")
+		}
+		al, err := net.Listen("tcp", adminAddr)
+		if err != nil {
+			return err
+		}
+		admin := &http.Server{ReadHeaderTimeout: 5 * time.Second, Handler: http.HandlerFunc(srv.HandleHostCheck)}
+		servers = append(servers, admin)
+		go func() { errs <- admin.Serve(al) }()
 	}
 	logger.Info("relay starting", "mode", mode, "apex", apex, "addr", addr,
 		"protocol", relayproto.ProtocolVersion, "proxy_protocol", useProxyProto)

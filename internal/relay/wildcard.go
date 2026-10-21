@@ -23,10 +23,14 @@ import (
 	"github.com/go-acme/lego/v4/registration"
 )
 
-// A public relay serves every name as its own subdomain, so that each name is
-// its own browser origin. That needs one certificate for <apex> and *.<apex>,
-// and a wildcard can only be obtained by proving control of the apex's DNS
-// (ACME DNS-01). The relay does that through a DNS provider's API.
+// Some certificates can only be obtained by proving control of a domain's
+// DNS (ACME DNS-01), which the relay does through a DNS provider's API:
+//
+//   - a public relay serves every name as its own subdomain, so that each name
+//     is its own browser origin, which needs one certificate for <apex> and
+//     *.<apex>;
+//   - a host behind a TLS-terminating CDN cannot answer TLS-ALPN-01, because
+//     the CDN, not the relay, answers its TLS.
 
 // dnsProviders are the DNS providers a relay can prove its apex through. Each
 // reads its credentials from its own environment variables, as lego
@@ -39,9 +43,10 @@ var dnsProviders = map[string]func() (challenge.Provider, error){
 // renewWithin is how long before a certificate expires the relay renews it.
 const renewWithin = 30 * 24 * time.Hour
 
-// wildcardCert obtains and renews the certificate for <apex> and *.<apex>,
+// wildcardCert obtains and renews one certificate for domains by DNS-01,
 // keeping it, and the ACME account, in a directory on the relay's volume.
 type wildcardCert struct {
+	domains                        []string
 	apex, dir, email, directoryURL string
 	provider                       challenge.Provider
 	logger                         *slog.Logger
@@ -50,11 +55,12 @@ type wildcardCert struct {
 	cert *tls.Certificate
 }
 
-func newWildcardCert(apex, dir, email, directoryURL, providerName string, logger *slog.Logger) (*wildcardCert, error) {
+func newWildcardCert(domains []string, dir, email, directoryURL, providerName string, logger *slog.Logger) (*wildcardCert, error) {
 	make, ok := dnsProviders[providerName]
 	if !ok {
-		return nil, fmt.Errorf("a public relay needs a wildcard certificate, obtained through a DNS provider: set RELAY_ACME_DNS_PROVIDER (supported: cloudflare)")
+		return nil, fmt.Errorf("certificates for %v need DNS-01, through a DNS provider: set RELAY_ACME_DNS_PROVIDER (supported: cloudflare)", domains)
 	}
+	apex := domains[0]
 	p, err := make()
 	if err != nil {
 		return nil, fmt.Errorf("DNS provider %s: %w", providerName, err)
@@ -62,8 +68,8 @@ func newWildcardCert(apex, dir, email, directoryURL, providerName string, logger
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	w := &wildcardCert{apex: apex, dir: dir, email: email, directoryURL: directoryURL, provider: p, logger: logger}
-	if c, err := w.load(); err == nil {
+	w := &wildcardCert{domains: domains, apex: apex, dir: dir, email: email, directoryURL: directoryURL, provider: p, logger: logger}
+	if c, err := w.load(); err == nil && covers(c, domains) {
 		w.cert = c
 	}
 	return w, nil
@@ -151,10 +157,10 @@ func (w *wildcardCert) ensure() error {
 		}
 	}
 	res, err := client.Certificate.Obtain(certificate.ObtainRequest{
-		Domains: []string{w.apex, "*." + w.apex}, Bundle: true,
+		Domains: w.domains, Bundle: true,
 	})
 	if err != nil {
-		return fmt.Errorf("obtain the certificate for %s and *.%s: %w", w.apex, w.apex, err)
+		return fmt.Errorf("obtain the certificate for %v: %w", w.domains, err)
 	}
 	if err := os.WriteFile(w.keyPath(), res.PrivateKey, 0o600); err != nil {
 		return err
@@ -171,6 +177,24 @@ func (w *wildcardCert) ensure() error {
 	w.mu.Unlock()
 	w.logger.Info("wildcard certificate obtained", "apex", w.apex, "not_after", c.Leaf.NotAfter)
 	return nil
+}
+
+// covers reports whether a cached certificate names every domain wanted, so a
+// changed configuration obtains a new one rather than serving the old.
+func covers(c *tls.Certificate, domains []string) bool {
+	if c.Leaf == nil {
+		return false
+	}
+	have := map[string]bool{}
+	for _, d := range c.Leaf.DNSNames {
+		have[d] = true
+	}
+	for _, d := range domains {
+		if !have[d] {
+			return false
+		}
+	}
+	return true
 }
 
 // acmeUser is the relay's ACME account, kept beside the certificate.

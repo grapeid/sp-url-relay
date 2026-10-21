@@ -21,6 +21,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -49,8 +50,25 @@ type Config struct {
 	// Apex is the relay's host name: the address it serves at, and its name in
 	// every admission challenge, which an Identity Agent checks against the
 	// host it dialled.
-	Apex  string
-	Store *store.Store
+	Apex string
+	// ConnectHost is the host Identity Agents dial to be admitted, and send
+	// control requests to. Empty means Apex. A relay whose caller-facing
+	// hosts sit behind a TLS-terminating CDN gives Identity Agents a separate,
+	// directly reached host here, because an admission is bound to the TLS
+	// connection the Identity Agent itself opened (ADR-048 §10). It must not
+	// be a name a caller could claim.
+	ConnectHost string
+	// OriginPullCAs, when set, requires every connection to a caller-facing
+	// host (the apex and public names, never the connect host or a custom
+	// domain) to present a client certificate from one of these authorities:
+	// the CDN's authenticated origin pulls. Nobody can then bypass the CDN by
+	// connecting to the relay's address directly.
+	OriginPullCAs *x509.CertPool
+	// TrustedProxies are the networks whose connections may say who the
+	// client is, in CF-Connecting-IP. A request from anywhere else is taken
+	// to come from its TCP peer.
+	TrustedProxies []*net.IPNet
+	Store          *store.Store
 	// Resolver checks custom-domain proofs. Nil means the system resolver.
 	Resolver Resolver
 	// ReservedNames are names nobody may claim, on top of the built-in list:
@@ -176,6 +194,13 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Store == nil {
 		return nil, fmt.Errorf("the relay needs a store")
 	}
+	cfg.ConnectHost = strings.ToLower(strings.TrimSpace(cfg.ConnectHost))
+	if cfg.ConnectHost == "" {
+		cfg.ConnectHost = cfg.Apex
+	}
+	if cfg.OriginPullCAs != nil && cfg.ConnectHost == cfg.Apex {
+		return nil, fmt.Errorf("origin pulls need a separate connect host: Identity Agents cannot present the CDN's client certificate")
+	}
 	if cfg.Resolver == nil {
 		cfg.Resolver = net.DefaultResolver
 	}
@@ -200,7 +225,7 @@ func New(cfg Config) (*Server, error) {
 	s := &Server{
 		cfg:            cfg,
 		registry:       relayproto.NewRegistry(),
-		reserved:       reservedNames(cfg.ReservedNames),
+		reserved:       reservedNames(append(cfg.ReservedNames, strings.TrimSuffix(cfg.ConnectHost, "."+cfg.Apex))),
 		bound:          map[string]string{},
 		boundCount:     map[string]int{},
 		perIP:          map[string]int{},
@@ -214,7 +239,7 @@ func New(cfg Config) (*Server, error) {
 	}
 	s.service = &relayproto.ServiceConfig{
 		Verifier: &relayproto.Verifier{
-			Service: cfg.Apex,
+			Service: cfg.ConnectHost,
 			Enrolled: func(aid string) ([]byte, bool) {
 				kel, ok, err := cfg.Store.KEL(aid)
 				if err != nil {
@@ -300,7 +325,7 @@ func (s *Server) verifiedDomain(host string) bool {
 // public relay any <name>.<apex> and every proved custom domain.
 func (s *Server) HostAllowed(host string) bool {
 	host = strings.ToLower(host)
-	if host == s.cfg.Apex {
+	if host == s.cfg.Apex || host == s.cfg.ConnectHost {
 		return true
 	}
 	if s.cfg.Mode != relayproto.ModePublic {
@@ -319,36 +344,47 @@ func (s *Server) RedirectToHTTPS(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "https://"+host+r.URL.RequestURI(), http.StatusPermanentRedirect)
 }
 
-// ServeHTTP routes one request: to the relay's own endpoints, or to the
-// Identity Agent behind the address the request names.
+// ServeHTTP routes one request by the host it names:
+//
+//   - the connect host serves Identity Agents: admission, control requests
+//     and the descriptor;
+//   - caller-facing hosts (the apex and public names) carry callers'
+//     requests to Identity Agents, and nothing else;
+//   - a proved custom domain is caller-facing too, but reached directly.
+//
+// When the connect host is the apex, the apex serves both.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	host := hostOnly(r.Host)
-	if host != s.cfg.Apex {
-		if name := s.nameOf(host); name != "" {
-			s.forwardName(w, r, name, host)
-			return
-		}
-		if s.cfg.Mode == relayproto.ModePublic {
+	if host == s.cfg.ConnectHost && s.serveConnect(w, r) {
+		return
+	}
+	if host != s.cfg.Apex && s.nameOf(host) == "" {
+		if host != s.cfg.ConnectHost && s.cfg.Mode == relayproto.ModePublic {
 			s.forwardDomain(w, r, host)
 			return
 		}
-		http.Error(w, "this relay does not serve that host", http.StatusMisdirectedRequest)
+		if host != s.cfg.ConnectHost {
+			http.Error(w, "this relay does not serve that host", http.StatusMisdirectedRequest)
+			return
+		}
+		http.NotFound(w, r)
+		return
+	}
+	// A caller-facing host. Behind a CDN, only the CDN may reach it.
+	if !s.originPulled(r) {
+		http.Error(w, "this host is reached only through its CDN", http.StatusForbidden)
+		return
+	}
+	if name := s.nameOf(host); name != "" {
+		s.forwardName(w, r, name, host)
 		return
 	}
 	switch r.URL.Path {
 	case "/health":
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"status":"ok","mode":%q}`, s.cfg.Mode)
+		s.handleHealth(w)
 		return
 	case "/.well-known/url-relay-service.json":
 		s.handleDescriptor(w, r)
-		return
-	case "/tunnel":
-		s.handleTunnel(w, r)
-		return
-	}
-	if h, ok := s.controlRoutes()[r.URL.Path]; ok {
-		s.handleControl(w, r, h)
 		return
 	}
 	if s.cfg.Mode == relayproto.ModePrivate {
@@ -358,9 +394,52 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
+// serveConnect answers what the connect host serves, reporting whether it
+// did.
+func (s *Server) serveConnect(w http.ResponseWriter, r *http.Request) bool {
+	switch r.URL.Path {
+	case "/health":
+		s.handleHealth(w)
+	case "/.well-known/url-relay-service.json":
+		s.handleDescriptor(w, r)
+	case "/tunnel":
+		s.handleTunnel(w, r)
+	default:
+		h, ok := s.controlRoutes()[r.URL.Path]
+		if !ok {
+			return false
+		}
+		s.handleControl(w, r, h)
+	}
+	return true
+}
+
+func (s *Server) handleHealth(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"status":"ok","mode":%q}`, s.cfg.Mode)
+}
+
+// callerFacing reports whether host is one callers reach through the CDN:
+// the apex, when it is not also the connect host, and every public name.
+func (s *Server) callerFacing(host string) bool {
+	if host == s.cfg.ConnectHost {
+		return false
+	}
+	return host == s.cfg.Apex || s.nameOf(host) != ""
+}
+
+// originPulled reports whether a request to a caller-facing host came through
+// the CDN: always true when origin pulls are off.
+func (s *Server) originPulled(r *http.Request) bool {
+	if s.cfg.OriginPullCAs == nil || !s.callerFacing(hostOnly(r.Host)) {
+		return true
+	}
+	return r.TLS != nil && len(r.TLS.VerifiedChains) > 0
+}
+
 // handleTunnel admits an Identity Agent, holding to the per-address cap.
 func (s *Server) handleTunnel(w http.ResponseWriter, r *http.Request) {
-	ip := clientIP(r)
+	ip := s.clientIP(r)
 	s.ipMu.Lock()
 	if s.perIP[ip] >= s.cfg.SessionsPerIP {
 		s.ipMu.Unlock()
@@ -470,7 +549,30 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, aid string, p r
 
 // clientIP is the address a request came from. With PROXY protocol enabled
 // the listener has already replaced the platform proxy's address with the
-// client's.
+// client's. A request from a trusted proxy (the CDN in front of caller-facing
+// hosts) names its client in CF-Connecting-IP; from anywhere else that header
+// is ignored, since anybody can send it.
+func (s *Server) clientIP(r *http.Request) string {
+	peer, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		peer = r.RemoteAddr
+	}
+	ip := net.ParseIP(peer)
+	if ip == nil || len(s.cfg.TrustedProxies) == 0 {
+		return peer
+	}
+	for _, n := range s.cfg.TrustedProxies {
+		if n.Contains(ip) {
+			if c := net.ParseIP(strings.TrimSpace(r.Header.Get("CF-Connecting-IP"))); c != nil {
+				return c.String()
+			}
+			return peer
+		}
+	}
+	return peer
+}
+
+// clientIP without a server: the TCP peer.
 func clientIP(r *http.Request) string {
 	ip, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {

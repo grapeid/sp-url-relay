@@ -13,7 +13,7 @@ var builtinReserved = []string{
 	"well-known", "login", "logout", "signin", "signup", "support", "help",
 	"admin", "administrator", "root", "www", "api", "relay", "status", "security",
 	"abuse", "postmaster", "hostmaster", "webmaster", "mail", "about", "account",
-	"billing", "docs", "official", "verify", "oobi", "didcomm", "public",
+	"billing", "docs", "official", "verify", "oobi", "didcomm", "public", "connect",
 }
 
 func reservedNames(extra []string) map[string]bool {

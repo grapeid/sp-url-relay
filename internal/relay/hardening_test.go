@@ -17,6 +17,8 @@ import (
 
 	proxyproto "github.com/pires/go-proxyproto"
 
+	"github.com/grapeid/sp-url-relay/internal/proxylisten"
+
 	"github.com/LF-Decentralized-Trust-labs/identity-bot/identity-agent-core/relayproto"
 )
 
@@ -202,7 +204,7 @@ func TestPrivateAddressesAreLimitedPerIdentity(t *testing.T) {
 }
 
 func TestPROXYProtocolGivesTheClientsAddressAndIsRequired(t *testing.T) {
-	ln, err := Listen("127.0.0.1:0", true)
+	ln, err := proxylisten.Listen("127.0.0.1:0", true)
 	if err != nil {
 		t.Fatal(err)
 	}

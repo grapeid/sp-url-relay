@@ -81,7 +81,7 @@ func (s *Server) handleControl(w http.ResponseWriter, r *http.Request, h control
 	}
 	// A request body has a few seconds to arrive, not as long as it likes.
 	http.NewResponseController(w).SetReadDeadline(s.cfg.Now().Add(controlReadTimeout))
-	ip := clientIP(r)
+	ip := s.clientIP(r)
 	if !s.controlIP.Allow(ip) {
 		writeError(w, http.StatusTooManyRequests, "rate_limited", "too many requests from this address")
 		return
@@ -129,8 +129,8 @@ func (s *Server) verifyControl(r *http.Request, op string) (controlRequest, int,
 	switch {
 	case c.str("op") != op:
 		return c, http.StatusBadRequest, fmt.Errorf("this endpoint takes op %q", op)
-	case c.str("relay") != s.cfg.Apex:
-		return c, http.StatusBadRequest, fmt.Errorf("the request names relay %q; this is %q", c.str("relay"), s.cfg.Apex)
+	case c.str("relay") != s.cfg.ConnectHost:
+		return c, http.StatusBadRequest, fmt.Errorf("the request names relay %q; this is %q", c.str("relay"), s.cfg.ConnectHost)
 	case c.aid == "":
 		return c, http.StatusBadRequest, fmt.Errorf("signed_by is required")
 	}
@@ -349,7 +349,7 @@ func (s *Server) unbind(label string) {
 // --- public mode ----------------------------------------------------------
 
 func (s *Server) handleClaimName(w http.ResponseWriter, r *http.Request, c controlRequest) {
-	if !s.claimIP.Allow(clientIP(r)) {
+	if !s.claimIP.Allow(s.clientIP(r)) {
 		writeError(w, http.StatusTooManyRequests, "rate_limited", "too many name claims from this address")
 		return
 	}
@@ -374,7 +374,7 @@ func (s *Server) handleClaimName(w http.ResponseWriter, r *http.Request, c contr
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"name": name, "public_url": "https://" + s.cfg.Apex + "/" + name + "/", "mode": relayproto.ModePublic,
+		"name": name, "public_url": "https://" + name + "." + s.cfg.Apex + "/", "mode": relayproto.ModePublic,
 	})
 }
 
@@ -484,7 +484,7 @@ func (s *Server) handleReleaseDomain(w http.ResponseWriter, _ *http.Request, c c
 // handleDescriptor publishes what an Identity Agent needs to use this relay
 // (ADR-048 §8).
 func (s *Server) handleDescriptor(w http.ResponseWriter, _ *http.Request) {
-	base := "https://" + s.cfg.Apex
+	base := "https://" + s.cfg.ConnectHost
 	endpoints := map[string]string{}
 	for path, h := range s.controlRoutes() {
 		endpoints[h.op] = base + path
@@ -492,11 +492,13 @@ func (s *Server) handleDescriptor(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"protocol":        relayproto.ProtocolVersion,
 		"subprotocol":     relayproto.Subprotocol,
-		"service":         s.cfg.Apex,
+		"service":         s.cfg.ConnectHost,
+		"connect_host":    s.cfg.ConnectHost,
+		"caller_host":     s.cfg.Apex,
 		"mode":            s.cfg.Mode,
-		"tunnel_endpoint": "wss://" + s.cfg.Apex + "/tunnel",
+		"tunnel_endpoint": "wss://" + s.cfg.ConnectHost + "/tunnel",
 		"endpoints":       endpoints,
-		"url_form":        "path",
+		"address_form":    map[relayproto.Mode]string{relayproto.ModePrivate: "https://" + s.cfg.Apex + "/<label>/", relayproto.ModePublic: "https://<name>." + s.cfg.Apex + "/"}[s.cfg.Mode],
 		"control_signing": map[string]any{
 			"fields":    []string{"op", "relay", "signed_by", "t", "nonce", "signature"},
 			"canonical": "JSON of string fields, signature removed, keys sorted, no whitespace, no HTML escaping",

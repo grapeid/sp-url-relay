@@ -1,4 +1,5 @@
-package relay
+// Package proxylisten opens TCP listeners that may require a PROXY protocol header.
+package proxylisten
 
 import (
 	"net"
