@@ -41,7 +41,9 @@ type Store struct {
 
 // Open opens (creating if needed) the database at path.
 func Open(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
+	// secure_delete overwrites what is deleted, so a removed row is not left
+	// readable in free pages of the file.
+	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=secure_delete(ON)")
 	if err != nil {
 		return nil, err
 	}
@@ -100,12 +102,25 @@ func (s *Store) migrate() error {
 			verified_at TEXT
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_domains_aid ON domains(aid)`,
+		`CREATE TABLE IF NOT EXISTS nonces (
+			digest TEXT PRIMARY KEY,
+			expires_at INTEGER NOT NULL
+		)`,
 		fmt.Sprintf(`PRAGMA user_version = %d`, schemaVersion),
 	}
 	for _, q := range stmts {
 		if _, err := s.db.Exec(q); err != nil {
 			return fmt.Errorf("migrate: %w", err)
 		}
+	}
+	// The earlier schema linked allocations to the identities that made them.
+	// Dropping its tables leaves their bytes in the file's free pages and in
+	// the write-ahead log; rewrite both so nothing of it survives.
+	if _, err := s.db.Exec(`VACUUM`); err != nil {
+		return fmt.Errorf("migrate: vacuum: %w", err)
+	}
+	if _, err := s.db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+		return fmt.Errorf("migrate: checkpoint: %w", err)
 	}
 	return nil
 }
@@ -136,8 +151,10 @@ func (s *Store) PutKEL(aid string, kel []byte) error {
 // CreateAllocation records a private allocation's label and the commitment to
 // its owner's secret.
 func (s *Store) CreateAllocation(label, commitment string) error {
+	// Only the month: an exact time could be matched against when an identity
+	// was connected, which would rebuild the link this table does not keep.
 	_, err := s.db.Exec(`INSERT INTO private_allocations (label, commitment, created_at) VALUES (?, ?, ?)`,
-		label, commitment, s.stamp())
+		label, commitment, s.now().UTC().Format("2006-01"))
 	return err
 }
 
@@ -195,8 +212,15 @@ func (s *Store) ClaimName(name, aid string, quota int, holdBack time.Duration) e
 	case err != nil && !errors.Is(err, sql.ErrNoRows):
 		return err
 	}
+	// A name released within the hold-back still counts against its
+	// releaser's quota, so claiming and releasing cannot lock up more names
+	// than the quota allows.
 	var n int
-	if err := tx.QueryRow(`SELECT COUNT(*) FROM names WHERE aid = ?`, aid).Scan(&n); err != nil {
+	cutoff := s.now().Add(-holdBack).UTC().Format(time.RFC3339)
+	if err := tx.QueryRow(`SELECT
+		(SELECT COUNT(*) FROM names WHERE aid = ?) +
+		(SELECT COUNT(*) FROM released_names WHERE aid = ? AND released_at > ? AND name != ?)`,
+		aid, aid, cutoff, name).Scan(&n); err != nil {
 		return err
 	}
 	if n >= quota {
@@ -262,13 +286,20 @@ func (s *Store) Domain(domain string) (Domain, error) {
 }
 
 // RequestDomain records that aid wants to be served at domain, unverified.
-// Asking again for a domain aid already asked for succeeds.
-func (s *Store) RequestDomain(domain, aid string, quota int) error {
+// Asking again for a domain aid already asked for succeeds. A request that
+// another identity made and never proved within pendingFor lapses, so nobody
+// can hold a domain they cannot prove. A domain held but unproved by another
+// identity is still ErrTaken here; its real owner proves it with
+// VerifyDomainFor, which takes it over.
+func (s *Store) RequestDomain(domain, aid string, quota int, pendingFor time.Duration) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	if err := expirePending(tx, s.now().Add(-pendingFor)); err != nil {
+		return err
+	}
 	var holder string
 	switch err := tx.QueryRow(`SELECT aid FROM domains WHERE domain = ?`, domain).Scan(&holder); {
 	case err == nil && holder == aid:
@@ -278,12 +309,8 @@ func (s *Store) RequestDomain(domain, aid string, quota int) error {
 	case !errors.Is(err, sql.ErrNoRows):
 		return err
 	}
-	var n int
-	if err := tx.QueryRow(`SELECT COUNT(*) FROM domains WHERE aid = ?`, aid).Scan(&n); err != nil {
+	if err := underQuota(tx, aid, quota); err != nil {
 		return err
-	}
-	if n >= quota {
-		return ErrQuota
 	}
 	if _, err := tx.Exec(`INSERT INTO domains (domain, aid, verified, requested_at) VALUES (?, ?, 0, ?)`,
 		domain, aid, s.stamp()); err != nil {
@@ -292,17 +319,102 @@ func (s *Store) RequestDomain(domain, aid string, quota int) error {
 	return tx.Commit()
 }
 
-// MarkDomainVerified records that the domain's DNS proved it is aid's.
-func (s *Store) MarkDomainVerified(domain, aid string) error {
-	res, err := s.db.Exec(`UPDATE domains SET verified = 1, verified_at = ? WHERE domain = ? AND aid = ?`,
-		s.stamp(), domain, aid)
+func expirePending(tx *sql.Tx, before time.Time) error {
+	_, err := tx.Exec(`DELETE FROM domains WHERE verified = 0 AND requested_at < ?`, before.UTC().Format(time.RFC3339))
+	return err
+}
+
+func underQuota(tx *sql.Tx, aid string, quota int) error {
+	var n int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM domains WHERE aid = ?`, aid).Scan(&n); err != nil {
+		return err
+	}
+	if n >= quota {
+		return ErrQuota
+	}
+	return nil
+}
+
+// VerifyDomainFor records that the domain's DNS has just proved it is aid's.
+// The proof decides, not who asked first: an unproved request by another
+// identity is replaced. A domain another identity has proved is ErrTaken; the
+// caller re-checks that identity's proof first and calls UnverifyDomain if it
+// no longer holds.
+func (s *Store) VerifyDomainFor(domain, aid string, quota int) error {
+	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return ErrNotFound
+	defer tx.Rollback()
+	var holder string
+	var verified int
+	switch err := tx.QueryRow(`SELECT aid, verified FROM domains WHERE domain = ?`, domain).Scan(&holder, &verified); {
+	case err == nil && holder == aid:
+	case err == nil && verified == 1:
+		return ErrTaken
+	case err == nil:
+		if _, err := tx.Exec(`DELETE FROM domains WHERE domain = ?`, domain); err != nil {
+			return err
+		}
+		fallthrough
+	case errors.Is(err, sql.ErrNoRows):
+		if err := underQuota(tx, aid, quota); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`INSERT INTO domains (domain, aid, verified, requested_at) VALUES (?, ?, 0, ?)`,
+			domain, aid, s.stamp()); err != nil {
+			return err
+		}
+	default:
+		return err
 	}
-	return nil
+	if _, err := tx.Exec(`UPDATE domains SET verified = 1, verified_at = ? WHERE domain = ? AND aid = ?`,
+		s.stamp(), domain, aid); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// UnverifyDomain stops serving a domain whose proof no longer holds. It stays
+// requested by the same identity, which may prove it again.
+func (s *Store) UnverifyDomain(domain string) error {
+	_, err := s.db.Exec(`UPDATE domains SET verified = 0, verified_at = NULL, requested_at = ? WHERE domain = ?`,
+		s.stamp(), domain)
+	return err
+}
+
+// VerifiedDomains lists every proved domain.
+func (s *Store) VerifiedDomains() ([]Domain, error) {
+	rows, err := s.db.Query(`SELECT domain, aid FROM domains WHERE verified = 1`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Domain
+	for rows.Next() {
+		d := Domain{Verified: true}
+		if err := rows.Scan(&d.Domain, &d.AID); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// UseNonce records a control request's nonce digest until expires. It
+// reports false if the digest is already recorded and unexpired: a replay.
+// Kept on disk so a restart does not make a request seconds old usable again.
+func (s *Store) UseNonce(digest string, expires time.Time) (bool, error) {
+	now := s.now().Unix()
+	if _, err := s.db.Exec(`DELETE FROM nonces WHERE expires_at < ?`, now); err != nil {
+		return false, err
+	}
+	res, err := s.db.Exec(`INSERT OR IGNORE INTO nonces (digest, expires_at) VALUES (?, ?)`, digest, expires.Unix())
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
 }
 
 // ReleaseDomain stops serving a domain. Only its holder may.
