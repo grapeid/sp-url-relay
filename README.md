@@ -39,10 +39,70 @@ database and certificate, so one abuse report against a public address cannot
 take private addresses down with it, and so no one database joins an
 identity's public name to its relationships.
 
+## Two front doors: the connect host and the caller-facing hosts
+
+A relay has a **connect host** (`RELAY_CONNECT_HOST`, for example
+`connect.<apex>`), where Identity Agents are admitted and send control
+requests, and **caller-facing hosts** (the apex and, on a public relay, every
+`<name>.<apex>`), where everybody else reaches them. With no connect host set,
+the apex serves both.
+
+- The connect host serves only `/tunnel`, the control endpoints, the
+  descriptor and `/health`.
+- Caller-facing hosts serve only callers' requests to addresses (and the
+  descriptor and `/health`); `/tunnel` and control requests there are 404.
+- The connect host's own name can never be claimed.
+- The descriptor names the connect host (`connect_host`, also `service`),
+  puts `tunnel_endpoint` and every entry of `endpoints` at it, and names the
+  caller-facing host separately (`caller_host`).
+
+This is what lets caller-facing hosts sit behind a CDN that terminates TLS,
+for DDoS and bot protection, while Identity Agents still reach the relay
+directly: an admission is bound to the TLS connection the Identity Agent
+itself opened, so the connect host must never be behind such a CDN.
+
+### Behind a CDN
+
+- **`RELAY_ORIGIN_PULL_CA`**: a PEM file of the CDN's origin-pull authority.
+  Every connection to a caller-facing host must then present a client
+  certificate it issued, checked during the TLS handshake (by SNI) and again
+  per request (by Host). Nobody can reach a caller-facing host around the
+  CDN by connecting to the relay's address. The connect host and custom
+  domains are exempt: they are reached directly. Requires a separate connect
+  host.
+- **`RELAY_TRUSTED_PROXIES_FILE`**: the CDN's published address ranges, one
+  CIDR per line. Only a connection from one of them may name its client in
+  `CF-Connecting-IP`; from anywhere else that header is ignored.
+- A CDN in front of a host answers that host's TLS, so its certificate must
+  come by DNS-01: set `RELAY_ACME_DNS_PROVIDER` (a private relay then obtains
+  its apex and connect host that way too).
+
+## Sharing one address: `snirouter`
+
+`cmd/snirouter` lets several TLS servers, such as a public and a private
+relay, share one IP address. It reads each connection's ClientHello for the
+server name and splices the connection, still encrypted, to the backend that
+serves it. It never decrypts anything, so admission's binding to the TLS
+connection is untouched. Names no route matches are dropped. The client's
+address reaches the backend in a PROXY protocol v2 header (run the relays with
+`RELAY_PROXY_PROTOCOL=1`).
+
+| Variable | Meaning |
+|---|---|
+| `ROUTER_LISTEN_ADDR` | where to listen (default `:8443`) |
+| `ROUTER_PROXY_PROTOCOL` | `1`: incoming connections begin with a PROXY header from a platform proxy, whose client address is passed on |
+| `ROUTER_ROUTES` | `host=backend` pairs, comma-separated; `*.example.org` matches every name under `example.org`, `example.org` only itself |
+| `ROUTER_ASKS` | `url=backend` pairs: a name no route matches goes to `backend` when `GET url?host=<name>` answers 200. A public relay answers this for its custom domains on `RELAY_ADMIN_ADDR` (loopback only) |
+
+The image's entrypoint can supervise several processes on one machine
+(`RELAY_SUPERVISE="public:relay private:relay router:snirouter"`): each gets
+the environment plus every variable prefixed with its name (`PUBLIC_RELAY_MODE`
+reaches `public` as `RELAY_MODE`), and if any exits, all stop.
+
 ## How an Identity Agent is admitted
 
 There is no password and no token. The Identity Agent opens a websocket to
-`wss://<apex>/tunnel` and answers the relay's challenge with a statement signed
+`wss://<connect-host>/tunnel` and answers the relay's challenge with a statement signed
 by its key, bound to that exact TLS connection (RFC 9266) and to this relay's
 name. The relay checks the identifier's key event log with keri-go, and keeps
 it: a later admission must present a log that extends it, so a key the identity
@@ -53,7 +113,8 @@ admission is logged with the identifier. See ADR-048 §3.
 
 Everything an Identity Agent asks of the relay is a JSON object of string
 fields, signed by the key its log names now, by an identifier that holds a live
-session. Every request carries `op`, `relay` (this relay's host name),
+session. Every request goes to the connect host and carries `op`, `relay`
+(the relay's `service` name, its connect host),
 `signed_by`, `t` (RFC 3339, within two minutes), `nonce` (16–64 characters,
 never accepted twice, even across a restart) and `signature`.
 
@@ -132,7 +193,11 @@ RELAY_MODE=private RELAY_APEX=relay.example.org ./relay
 | Variable | Default | Meaning |
 |---|---|---|
 | `RELAY_MODE` | (required) | `public` or `private`, for the life of the process |
-| `RELAY_APEX` | (required) | the relay's host name: its address, and its name in every admission |
+| `RELAY_APEX` | (required) | the relay's caller-facing host name |
+| `RELAY_CONNECT_HOST` | the apex | where Identity Agents connect; the relay's name in every admission and control request |
+| `RELAY_ORIGIN_PULL_CA` | | PEM file: require the CDN's client certificate on caller-facing hosts |
+| `RELAY_TRUSTED_PROXIES_FILE` | | CIDR list: peers allowed to name the client in `CF-Connecting-IP` |
+| `RELAY_ADMIN_ADDR` | | loopback address answering `GET /hosts?host=` for an SNI router |
 | `RELAY_LISTEN_ADDR` | `:443` | the TLS port |
 | `RELAY_HTTP_ADDR` | (none) | optional plain-HTTP port that only redirects to HTTPS |
 | `RELAY_DATA_DIR` | `./data` | the database (`relay.db`) and the certificate cache |

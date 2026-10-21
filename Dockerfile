@@ -11,11 +11,12 @@ ENV CGO_ENABLED=0 GOOS=linux GOTOOLCHAIN=auto
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go build -trimpath -ldflags="-s -w" -o /out/relay ./cmd/relay
+RUN go build -trimpath -ldflags="-s -w" -o /out/relay ./cmd/relay && \
+    go build -trimpath -ldflags="-s -w" -o /out/snirouter ./cmd/snirouter
 
 FROM alpine:3.20 AS runtime
 RUN apk add --no-cache ca-certificates tzdata su-exec && adduser -D -u 10001 relay
-COPY --from=build /out/relay /usr/local/bin/relay
+COPY --from=build /out/relay /out/snirouter /usr/local/bin/
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 # The database and certificates live in /data; mount a volume on it. A
 # platform volume is usually owned by root, so the entrypoint starts as root,
