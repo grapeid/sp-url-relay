@@ -13,11 +13,13 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/go-acme/lego/v4/certificate"
 	"github.com/go-acme/lego/v4/challenge"
+	"github.com/go-acme/lego/v4/challenge/dns01"
 	"github.com/go-acme/lego/v4/lego"
 	"github.com/go-acme/lego/v4/providers/dns/cloudflare"
 	"github.com/go-acme/lego/v4/registration"
@@ -50,6 +52,7 @@ type wildcardCert struct {
 	apex, dir, email, directoryURL string
 	provider                       challenge.Provider
 	logger                         *slog.Logger
+	obtain                         func() error // ensure, unless a test replaces it
 
 	mu   sync.RWMutex
 	cert *tls.Certificate
@@ -107,24 +110,59 @@ func (w *wildcardCert) needsRenewal(now time.Time) bool {
 }
 
 // keep obtains the certificate if needed and checks twice a day after that.
-// It returns once a certificate is held, or the first attempt has failed.
+// It never gives up and never returns an error: a relay that exited on a
+// failed attempt was restarted at once and tried again, and every attempt is an
+// order with the certificate authority, so a crash loop spends its rate limits
+// in minutes. A failed attempt is retried after a delay that doubles from one
+// minute to an hour. Until a certificate is held, handshakes are refused.
 func (w *wildcardCert) keep(stop <-chan struct{}) error {
-	first := w.ensure()
+	obtain := w.obtain
+	if obtain == nil {
+		obtain = w.ensure
+	}
+	shortest, longest := firstRetry, lastRetry
 	go func() {
-		t := time.NewTicker(12 * time.Hour)
-		defer t.Stop()
+		delay := shortest
 		for {
+			wait := 12 * time.Hour
+			if err := obtain(); err != nil {
+				w.logger.Error("obtain the certificate; trying again later", "apex", w.apex, "retry_in", delay.String(), "error", err)
+				wait = delay
+				if delay *= 2; delay > longest {
+					delay = longest
+				}
+			} else {
+				delay = shortest
+			}
 			select {
 			case <-stop:
 				return
-			case <-t.C:
-				if err := w.ensure(); err != nil {
-					w.logger.Error("renew the wildcard certificate", "apex", w.apex, "error", err)
-				}
+			case <-time.After(wait):
 			}
 		}
 	}()
-	return first
+	return nil
+}
+
+// How soon a failed certificate attempt is tried again, at first and at most.
+var (
+	firstRetry = time.Minute
+	lastRetry  = time.Hour
+)
+
+// resolvers are the public resolvers the challenge record is checked through:
+// RELAY_ACME_RESOLVERS (host:port, comma-separated) or two well-known ones.
+func (w *wildcardCert) resolvers() []string {
+	if v := strings.TrimSpace(os.Getenv("RELAY_ACME_RESOLVERS")); v != "" {
+		var out []string
+		for _, r := range strings.Split(v, ",") {
+			if r = strings.TrimSpace(r); r != "" {
+				out = append(out, r)
+			}
+		}
+		return out
+	}
+	return []string{"1.1.1.1:53", "8.8.8.8:53"}
 }
 
 func (w *wildcardCert) ensure() error {
@@ -143,7 +181,10 @@ func (w *wildcardCert) ensure() error {
 	if err != nil {
 		return err
 	}
-	if err := client.Challenge.SetDNS01Provider(w.provider); err != nil {
+	// The challenge record is checked through public resolvers. A platform's
+	// own resolver can keep answering from a cache, and a CNAME it still
+	// remembers sent the record to a zone this relay cannot write.
+	if err := client.Challenge.SetDNS01Provider(w.provider, dns01.AddRecursiveNameservers(w.resolvers())); err != nil {
 		return err
 	}
 	if user.Registration == nil {
