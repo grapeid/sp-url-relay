@@ -16,11 +16,25 @@ run it. Grape ID runs one.
 
 | Mode | An identity gets | The address passes |
 |---|---|---|
-| **public** | one stable address anybody may find: `https://<apex>/<name>/`, or its own domain | every request; the Identity Agent's own gate decides |
+| **public** | one stable address anybody may find: `https://<name>.<apex>/`, or its own domain | every request; the Identity Agent's own gate decides |
 | **private** | one unlinkable address per relationship: `https://<apex>/<label>/` | identity artifacts, messages and key registration only |
 
 Which one an identity uses is its own choice; nothing here ties a mode to a
-kind of identity. **Run each mode as its own deployment**, with its own domain,
+kind of identity.
+
+**Every public name is its own host**, so its own browser origin: one name's
+pages cannot read another name's, set its cookies, or install a service worker
+over it. As defence in depth the relay also drops, from every relayed
+response, a `Set-Cookie` that names a `Domain` and the `Service-Worker-Allowed`
+header.
+
+**Choosing the two apexes.**
+- The public apex should be on the [Public Suffix List](https://publicsuffix.org/),
+  so browsers treat each `<name>.<apex>` as a separate site and refuse cookies
+  set for the apex itself.
+- The public apex must not be a parent of the private apex (or the other way
+  round). A page at a public name must never share a registrable domain with a
+  private relay's addresses. **Run each mode as its own deployment**, with its own domain,
 database and certificate, so one abuse report against a public address cannot
 take private addresses down with it, and so no one database joins an
 identity's public name to its relationships.
@@ -37,12 +51,22 @@ admission is logged with the identifier. See ADR-048 §3.
 
 ## Control requests
 
-Everything an Identity Agent asks of the relay is a JSON object signed by the
-key its log names now, by an identifier that holds a live session. Every
-request carries `op`, `relay` (this relay's host name), `signed_by`, `t` (RFC
-3339, within two minutes), `nonce` (16–64 characters, never accepted twice) and
-`signature`: Ed25519 over the JSON with keys sorted and `signature` removed,
-base64url. Every field is a string of printable ASCII.
+Everything an Identity Agent asks of the relay is a JSON object of string
+fields, signed by the key its log names now, by an identifier that holds a live
+session. Every request carries `op`, `relay` (this relay's host name),
+`signed_by`, `t` (RFC 3339, within two minutes), `nonce` (16–64 characters,
+never accepted twice, even across a restart) and `signature`.
+
+It is signed the way the relay protocol signs an admission statement
+(ADR-048 §3): Ed25519 over the object's canonical JSON, meaning every field
+except `signature`, keys sorted, no whitespace, no HTML escaping, and
+base64url without padding. Every field is printable ASCII, so the signed bytes
+have one spelling.
+
+Limits: a loose per-address limit before anything is verified, then a
+per-identity limit once the signature has verified, so unsigned noise from a
+shared address cannot spend an identity's allowance. A request body has ten
+seconds to arrive.
 
 **Private mode**
 
@@ -56,9 +80,11 @@ The relay stores each label and the commitment to its secret, **never which
 identity made it**. Which identity serves which label is kept in memory only.
 So after the relay restarts, an Identity Agent sends `bind` for each of its
 addresses once it is admitted again; the secret proves the address is its own.
-A live relay can still see which addresses arrive on one session; not storing
-that protects a copy of the relay's data, not the running operator (ADR-048
-§11).
+Its log lines for these requests name no identity either, and an
+allocation's recorded date is only its month. One identity may hold a limited
+number of private addresses at once. A live relay can still see which
+addresses arrive on one session; not storing that protects a copy of the
+relay's data, not the running operator (ADR-048 §11).
 
 **Public mode**
 
@@ -75,18 +101,25 @@ that protects a copy of the relay's data, not the running operator (ADR-048
   `api` and similar, plus any the operator adds) cannot be claimed.
 - One identity may hold a limited number of names and, separately, domains.
 - A released name cannot be claimed by anybody else for 90 days, so it cannot
-  be picked up at once to impersonate whoever gave it up.
+  be picked up at once to impersonate whoever gave it up. It counts against its
+  releaser's quota for those 90 days, and name claims are limited per address.
 - A domain is proved by `TXT _iarelay.<domain>` carrying
-  `iarelay-aid=<identifier>`, and must point at the relay.
+  `iarelay-aid=<identifier>`, and must point at the relay. **The proof decides
+  who holds a domain, not who asked first**: proving it takes over somebody
+  else's unproved request, and an unproved request lapses after seven days.
+- Proved domains are proved again every six hours; one whose proof fails three
+  times in a row stops being served. DNS checks are limited per identity and
+  per relay.
 
 `GET /.well-known/url-relay-service.json` describes the relay: mode, protocol,
 endpoints and limits.
 
 ## Requests to an address
 
-A request to `https://<apex>/<label-or-name>/rest` reaches the Identity Agent
-as `/rest`, with `X-Forwarded-Prefix: /<label-or-name>` and the stream's
-preamble naming the allocation. A custom domain's requests arrive unchanged.
+A request to a private address, `https://<apex>/<label>/rest`, reaches the
+Identity Agent as `/rest`, with `X-Forwarded-Prefix: /<label>` and the stream's
+preamble naming the allocation. A request to a public name or custom domain
+arrives unchanged, under its own host.
 The protocol's limits apply (ADR-048 §5).
 
 ## Running it
@@ -103,13 +136,32 @@ RELAY_MODE=private RELAY_APEX=relay.example.org ./relay
 | `RELAY_LISTEN_ADDR` | `:443` | the TLS port |
 | `RELAY_HTTP_ADDR` | (none) | optional plain-HTTP port that only redirects to HTTPS |
 | `RELAY_DATA_DIR` | `./data` | the database (`relay.db`) and the certificate cache |
-| `RELAY_TLS` | `acme` | `acme` (certificates obtained automatically, TLS-ALPN-01 on the TLS port) or `files` |
-| `RELAY_TLS_CERT`, `RELAY_TLS_KEY` | | the certificate and key, with `RELAY_TLS=files` |
+| `RELAY_TLS` | `acme` | `acme` (certificates obtained automatically, see below) or `files` |
+| `RELAY_TLS_CERT`, `RELAY_TLS_KEY` | | the certificate and key, with `RELAY_TLS=files`. A public relay's must cover `<apex>` and `*.<apex>` |
 | `RELAY_ACME_EMAIL` | | contact given to the certificate authority |
 | `RELAY_ACME_DIRECTORY` | Let's Encrypt | another ACME directory, such as a staging one |
+| `RELAY_ACME_DNS_PROVIDER` | (required for a public relay with `acme`) | the DNS provider the apex is proved through: `cloudflare` |
+| `CLOUDFLARE_DNS_API_TOKEN` | | with `cloudflare`: an API token scoped to edit DNS in the apex's zone only |
+| `RELAY_PROXY_PROTOCOL` | off | `1`: every connection must begin with a PROXY protocol header from the platform's TCP proxy, whose client address the relay then uses |
 | `RELAY_RESERVED_NAMES` | | extra names nobody may claim, comma-separated |
 | `RELAY_PER_IDENTITY` | `3` | names, and separately domains, one identity may hold |
 | `RELAY_MAX_SESSIONS` | `10000` | Identity Agents connected at once |
+| `RELAY_SESSIONS_PER_IP` | `50` | Identity Agents connected at once from one address |
+| `RELAY_MAX_STREAMS` | `20000` | requests in flight through the whole relay |
+| `RELAY_MEMORY_LIMIT_MB` | (none) | heap size past which no new session is admitted |
+| `RELAY_PRIVATE_PER_SESSION` | `2000` | private addresses one identity may hold at once |
+
+### Certificates
+
+- **A private relay** obtains a certificate for its apex by TLS-ALPN-01 on its
+  own TLS port.
+- **A public relay** needs `<apex>` and `*.<apex>` in one wildcard certificate,
+  which only DNS-01 can obtain: the relay proves its apex through
+  `RELAY_ACME_DNS_PROVIDER` and renews the certificate 30 days before expiry.
+  Its custom domains each get their own certificate by TLS-ALPN-01, and only
+  once proved.
+
+Certificates and the ACME accounts are kept under `RELAY_DATA_DIR/certs`.
 
 ### The relay must terminate TLS itself
 
@@ -121,7 +173,17 @@ Identity Agent. So:
   would see a different TLS connection from the Identity Agent's, and could
   admit nobody.
 
-Configure your platform to pass raw TCP to the relay's port.
+Configure your platform to pass raw TCP to the relay's port. If that proxy can
+announce each client's address with the PROXY protocol, enable it on both
+sides (`RELAY_PROXY_PROTOCOL=1`); otherwise every client appears to come from
+the proxy, and the per-address limits apply to all of them together.
+
+### Container
+
+The image starts as root only long enough to give the data directory to an
+unprivileged `relay` user (a platform volume is usually owned by root), then
+runs the relay as that user. It listens on 8443 (TLS) and, if
+`RELAY_HTTP_ADDR=:8080` is set, 8080 (redirect only).
 
 ### One machine per deployment
 
