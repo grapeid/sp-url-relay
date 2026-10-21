@@ -501,6 +501,13 @@ func (s *Server) forwardLabel(w http.ResponseWriter, r *http.Request) {
 		out.URL.RawPath = tail
 	}
 	out.RequestURI = ""
+	// A private address serves artifacts, messages and key registration, none
+	// of which use cookies or credentials. Never pass a caller's: a browser
+	// sends cookies for the whole site, and until each name under a shared
+	// parent domain is its own site, one set elsewhere could reach here.
+	for _, h := range []string{"Cookie", "Authorization", "Proxy-Authorization"} {
+		out.Header.Del(h)
+	}
 	out.Header.Set("X-Forwarded-Prefix", "/"+seg)
 	s.forward(w, out, aid, relayproto.Preamble{Allocation: seg, Mode: relayproto.ModePrivate, Host: s.cfg.Apex})
 }

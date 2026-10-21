@@ -305,3 +305,28 @@ func leaf(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKey, client bo
 	}
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
 }
+
+// A private relay behind a CDN obtains its apex and its connect host by
+// DNS-01; a public relay's wildcard covers a connect host one level down.
+func TestEachRelayAsksForTheCertificateItsHostsNeed(t *testing.T) {
+	for _, c := range []struct {
+		mode          relayproto.Mode
+		apex, connect string
+		want          []string
+	}{
+		{relayproto.ModePrivate, "relay.grapeid.example", "connect.relay.grapeid.example",
+			[]string{"relay.grapeid.example", "connect.relay.grapeid.example"}},
+		{relayproto.ModePublic, "grapeid.example", "connect.grapeid.example",
+			[]string{"grapeid.example", "*.grapeid.example"}},
+	} {
+		st, _ := store.Open(filepath.Join(t.TempDir(), "r.db"))
+		s, err := New(Config{Mode: c.mode, Apex: c.apex, ConnectHost: c.connect, Store: st})
+		st.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := s.ownDomains(); strings.Join(got, ",") != strings.Join(c.want, ",") {
+			t.Errorf("%s: %v, want %v", c.mode, got, c.want)
+		}
+	}
+}

@@ -380,3 +380,26 @@ func openRaw(t *testing.T, path string) *sql.DB {
 	}
 	return db
 }
+
+func TestAPrivateAddressPassesNoCookiesOrCredentials(t *testing.T) {
+	h := newHarness(t, relayproto.ModePrivate)
+	id := newIdentity(t)
+	h.connect(id, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"cookie":%q,"authorization":%q,"proxy":%q}`,
+			r.Header.Get("Cookie"), r.Header.Get("Authorization"), r.Header.Get("Proxy-Authorization"))
+	}))
+	a := h.allocate(id)
+	req, _ := http.NewRequest("POST", h.ts.URL+"/"+a.label+"/didcomm", strings.NewReader("sealed"))
+	req.Header.Set("Cookie", "session=from-another-site")
+	req.Header.Set("Authorization", "Bearer someone-elses")
+	req.Header.Set("Proxy-Authorization", "Basic x")
+	resp, err := h.client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != `{"cookie":"","authorization":"","proxy":""}` {
+		t.Fatalf("the Identity Agent received %s", body)
+	}
+}
