@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"crypto/ed25519"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
@@ -12,8 +13,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	keri "github.com/grapeid/keri-go"
 
 	"github.com/LF-Decentralized-Trust-labs/identity-bot/identity-agent-core/relayproto"
 
@@ -149,7 +148,9 @@ func (s *Server) verifyControl(r *http.Request, op string) (controlRequest, int,
 	if !ok {
 		return c, http.StatusForbidden, fmt.Errorf("connect to this relay before asking it for anything")
 	}
-	key, err := currentKey(session.KEL(), c.aid)
+	// The session's log, which admission already verified, checked again
+	// because a control request is authorised by it.
+	key, err := relayproto.CurrentKey(c.aid, session.KEL())
 	if err != nil {
 		return c, http.StatusForbidden, err
 	}
@@ -161,7 +162,7 @@ func (s *Server) verifyControl(r *http.Request, op string) (controlRequest, int,
 	if err != nil {
 		return c, http.StatusBadRequest, err
 	}
-	if err := keri.VerifySignature(key, body, sig); err != nil {
+	if !ed25519.Verify(key, body, sig) {
 		return c, http.StatusUnauthorized, fmt.Errorf("the request is not signed by the key %q's log names now", c.aid)
 	}
 	// Recorded only once it has verified, so nobody can burn somebody else's
@@ -175,21 +176,6 @@ func (s *Server) verifyControl(r *http.Request, op string) (controlRequest, int,
 		return c, http.StatusConflict, fmt.Errorf("this request has been seen before")
 	}
 	return c, 0, nil
-}
-
-// currentKey is the one signing key an identifier's key event log names now.
-// The log is the session's, which admission already verified; it is checked
-// again because a control request is authorised by it.
-func currentKey(kel []byte, aid string) (string, error) {
-	messages, err := keri.ParseKELStream(kel)
-	if err != nil {
-		return "", fmt.Errorf("the key event log held for %q is not readable", aid)
-	}
-	st, err := keri.ValidateSignedKEL(messages)
-	if err != nil || st.Identifier != aid || len(st.Keys) != 1 {
-		return "", fmt.Errorf("the key event log held for %q does not establish one signing key", aid)
-	}
-	return st.Keys[0], nil
 }
 
 // canonicalControl is the byte string a control request is signed over: the
