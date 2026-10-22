@@ -16,17 +16,25 @@ run it. Grape ID runs one.
 
 | Mode | An identity gets | The address passes |
 |---|---|---|
-| **public** | one stable address anybody may find: `https://<name>.<apex>/`, or its own domain | every request; the Identity Agent's own gate decides |
+| **public** | one stable address anybody may find: `https://<name>.<apex>/`, or its own domain | every request but a browser loading a page; the Identity Agent's own gate decides |
 | **private** | one unlinkable address per relationship: `https://<apex>/<label>/` | identity artifacts, messages and key registration only |
 
 Which one an identity uses is its own choice; nothing here ties a mode to a
 kind of identity.
 
-**Every public name is its own host**, so its own browser origin: one name's
-pages cannot read another name's, set its cookies, or install a service worker
-over it. As defence in depth the relay also drops, from every relayed
-response, a `Set-Cookie` that names a `Domain` and the `Service-Worker-Allowed`
-header.
+**An address carries the protocol, never a page** (ADR-048 §12). The relay
+checks what kind of thing an answer is, never what it says, the same way for
+every identity, so its operator never has to judge content:
+- A browser loading a page at any address gets this relay's own short page,
+  the same everywhere, saying what the address is and where to get an Identity
+  Agent (`RELAY_VISITOR_LINK`). The Identity Agent is never asked.
+- An Identity Agent's answer passes only as JSON, CESR, opaque bytes or plain
+  text. A page, script, image, document or redirect is refused.
+- Every answer is sent with `X-Content-Type-Options: nosniff` and a sandboxing
+  `Content-Security-Policy`, without `Refresh`, `Link`, `Location`,
+  `Service-Worker-Allowed` or a cookie scoped wider than its own host.
+
+**Every public name is its own host**, so its own browser origin.
 
 **Choosing the two apexes.**
 - The public apex should be on the [Public Suffix List](https://publicsuffix.org/),
@@ -209,6 +217,7 @@ RELAY_MODE=private RELAY_APEX=relay.example.org ./relay
 | `CLOUDFLARE_DNS_API_TOKEN` | | with `cloudflare`: an API token scoped to edit DNS in the apex's zone only |
 | `RELAY_PROXY_PROTOCOL` | off | `1`: every connection must begin with a PROXY protocol header from the platform's TCP proxy, whose client address the relay then uses |
 | `RELAY_RESERVED_NAMES` | | extra names nobody may claim, comma-separated |
+| `RELAY_VISITOR_LINK` | the open-source Identity Agent | an `https` link the visitor page offers for getting an Identity Agent |
 | `RELAY_PER_IDENTITY` | `3` | names, and separately domains, one identity may hold |
 | `RELAY_MAX_SESSIONS` | `10000` | Identity Agents connected at once |
 | `RELAY_SESSIONS_PER_IP` | `50` | Identity Agents connected at once from one address |
