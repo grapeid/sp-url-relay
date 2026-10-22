@@ -32,6 +32,7 @@ func TestARelayedResponseCannotReachBeyondItsOwnAddress(t *testing.T) {
 		w.Header().Set("Service-Worker-Allowed", "/")
 		w.Header().Add("Set-Cookie", "session=mine; Path=/; Secure")
 		w.Header().Add("Set-Cookie", "spread=everyone; Domain="+apex+"; Path=/")
+		w.Header().Add("Set-Cookie", "spaced=everyone; domain = ."+apex)
 		w.Write([]byte("ok"))
 	}))
 	h.control(id, "/names/claim", "claim-name", map[string]any{"name": "acme"})
@@ -41,8 +42,8 @@ func TestARelayedResponseCannotReachBeyondItsOwnAddress(t *testing.T) {
 		t.Fatal("a service worker was allowed a wider scope")
 	}
 	cookies := resp.Header.Values("Set-Cookie")
-	if len(cookies) != 1 || !strings.HasPrefix(cookies[0], "session=mine") {
-		t.Fatalf("cookies passed: %q; want only the host-only one", cookies)
+	if len(cookies) != 0 {
+		t.Fatalf("cookies passed: %q; the protocol uses none, so none may pass", cookies)
 	}
 }
 

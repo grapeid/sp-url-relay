@@ -30,9 +30,12 @@ every identity, so its operator never has to judge content:
   Agent (`RELAY_VISITOR_LINK`). The Identity Agent is never asked.
 - An Identity Agent's answer passes only as JSON, CESR, opaque bytes or plain
   text. A page, script, image, document or redirect is refused.
-- Every answer is sent with `X-Content-Type-Options: nosniff` and a sandboxing
-  `Content-Security-Policy`, without `Refresh`, `Link`, `Location`,
-  `Service-Worker-Allowed` or a cookie scoped wider than its own host.
+- Every answer keeps only the protocol's headers (type, length, encoding,
+  validators, `Vary`, `Retry-After`, the `X-Keri-` key-state headers and
+  credential-free CORS) and no cookie. It is sent with
+  `X-Content-Type-Options: nosniff`, a sandboxing `Content-Security-Policy`,
+  `X-Frame-Options: DENY` and `Cache-Control: private, no-store`, so a CDN in
+  front of the relay never keeps an answer to hand to a browser.
 
 **Every public name is its own host**, so its own browser origin.
 
