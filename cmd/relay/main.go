@@ -94,7 +94,7 @@ func run(logger *slog.Logger) error {
 	srv, err := relay.New(relay.Config{
 		Mode: mode, Apex: apex, ConnectHost: env("RELAY_CONNECT_HOST", ""),
 		OriginPullCAs: originPulls, TrustedProxies: trusted,
-		Store: st, ReservedNames: reserved,
+		Store: st, ReservedNames: reserved, VisitorLink: env("RELAY_VISITOR_LINK", ""),
 		PerIdentity: perIdentity, MaxSessions: maxSessions, SessionsPerIP: perIP,
 		MaxStreams: maxStreams, PrivatePerSession: privatePer,
 		MemoryLimit: uint64(memoryMB) << 20, Logger: logger,

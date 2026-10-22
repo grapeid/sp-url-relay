@@ -18,11 +18,9 @@
 package relay
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/x509"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -71,6 +69,11 @@ type Config struct {
 	Store          *store.Store
 	// Resolver checks custom-domain proofs. Nil means the system resolver.
 	Resolver Resolver
+	// VisitorLink is where the visitor page's "get an Identity Agent" leads: the
+	// page a browser is shown when it loads a page at any address here
+	// (ADR-048 §12). Empty means relayproto.DefaultVisitorLink.
+	VisitorLink string
+
 	// ReservedNames are names nobody may claim, on top of the built-in list:
 	// brand names, say.
 	ReservedNames []string
@@ -539,6 +542,12 @@ func (s *Server) forwardDomain(w http.ResponseWriter, r *http.Request, host stri
 // forward hands one request to the identifier's session, within the
 // relay-wide ceiling on requests in flight, and filters what comes back.
 func (s *Server) forward(w http.ResponseWriter, r *http.Request, aid string, p relayproto.Preamble) {
+	// A browser loading a page gets this relay's own page, the same at every
+	// address; nothing an Identity Agent sends is ever shown as a page here.
+	if relayproto.IsBrowserNavigation(r) {
+		relayproto.ServeVisitorPage(w, r, s.cfg.VisitorLink)
+		return
+	}
 	session, ok := s.registry.Get(aid)
 	if !ok {
 		http.Error(w, "the Identity Agent at this address is not connected", http.StatusBadGateway)
@@ -551,7 +560,7 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, aid string, p r
 		http.Error(w, "the relay is busy", http.StatusServiceUnavailable)
 		return
 	}
-	session.Forward(&responseFilter{ResponseWriter: w}, r, p)
+	session.Forward(w, r, p)
 }
 
 // clientIP is the address a request came from. With PROXY protocol enabled
@@ -655,59 +664,3 @@ func (s *Server) proves(ctx context.Context, domain, aid string) bool {
 	}
 	return false
 }
-
-// responseFilter removes what a relayed response could use to reach beyond
-// its own address: a cookie scoped to a parent domain, and a service worker
-// allowed a wider scope than its own path. Each public name is already its
-// own origin; this is defence in depth.
-type responseFilter struct {
-	http.ResponseWriter
-	done bool
-}
-
-func (f *responseFilter) filter() {
-	if f.done {
-		return
-	}
-	f.done = true
-	h := f.ResponseWriter.Header()
-	h.Del("Service-Worker-Allowed")
-	if cookies := h.Values("Set-Cookie"); len(cookies) > 0 {
-		h.Del("Set-Cookie")
-		for _, c := range cookies {
-			parsed, err := http.ParseSetCookie(c)
-			if err != nil || parsed.Domain != "" {
-				continue
-			}
-			h.Add("Set-Cookie", c)
-		}
-	}
-}
-
-func (f *responseFilter) WriteHeader(code int) {
-	f.filter()
-	f.ResponseWriter.WriteHeader(code)
-}
-
-func (f *responseFilter) Write(b []byte) (int, error) {
-	f.filter()
-	return f.ResponseWriter.Write(b)
-}
-
-// Hijack is how a websocket upgrade takes the connection; the upgrade
-// response's headers are written from the same header map after it.
-func (f *responseFilter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	f.filter()
-	h, ok := f.ResponseWriter.(http.Hijacker)
-	if !ok {
-		return nil, nil, errors.New("hijacking is not supported")
-	}
-	return h.Hijack()
-}
-
-func (f *responseFilter) Flush() {
-	f.filter()
-	http.NewResponseController(f.ResponseWriter).Flush()
-}
-
-func (f *responseFilter) Unwrap() http.ResponseWriter { return f.ResponseWriter }

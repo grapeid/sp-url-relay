@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -31,6 +32,7 @@ func TestARelayedResponseCannotReachBeyondItsOwnAddress(t *testing.T) {
 		w.Header().Set("Service-Worker-Allowed", "/")
 		w.Header().Add("Set-Cookie", "session=mine; Path=/; Secure")
 		w.Header().Add("Set-Cookie", "spread=everyone; Domain="+apex+"; Path=/")
+		w.Header().Add("Set-Cookie", "spaced=everyone; domain = ."+apex)
 		w.Write([]byte("ok"))
 	}))
 	h.control(id, "/names/claim", "claim-name", map[string]any{"name": "acme"})
@@ -40,8 +42,49 @@ func TestARelayedResponseCannotReachBeyondItsOwnAddress(t *testing.T) {
 		t.Fatal("a service worker was allowed a wider scope")
 	}
 	cookies := resp.Header.Values("Set-Cookie")
-	if len(cookies) != 1 || !strings.HasPrefix(cookies[0], "session=mine") {
-		t.Fatalf("cookies passed: %q; want only the host-only one", cookies)
+	if len(cookies) != 0 {
+		t.Fatalf("cookies passed: %q; the protocol uses none, so none may pass", cookies)
+	}
+}
+
+// --- the protocol, never a page (ADR-048 §12) -------------------------------
+
+// A browser loading a page at a name gets this relay's visitor page, with the
+// operator's link, and the Identity Agent behind the name is never asked; an
+// Identity Agent that answers a script with a page has it refused.
+func TestANameShowsABrowserTheRelaysPageNeverTheIdentityAgents(t *testing.T) {
+	h := newHarnessWith(t, relayproto.ModePublic, func(c *Config) { c.VisitorLink = "https://operator.test/get" })
+	id := newIdentity(t)
+	var reached atomic.Int32
+	h.connect(id, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached.Add(1)
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte("<form>password</form>"))
+	}))
+	h.control(id, "/names/claim", "claim-name", map[string]any{"name": "acme"})
+
+	get := func(headers map[string]string) (*http.Response, string) {
+		req, _ := http.NewRequest("GET", h.ts.URL+"/", nil)
+		req.Host = "acme." + apex
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		resp, err := h.client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp, string(b)
+	}
+	resp, body := get(map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"})
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `href="https://operator.test/get"`) ||
+		strings.Contains(body, "password") || reached.Load() != 0 {
+		t.Fatalf("a page load at a name: %d, reached %d, %s", resp.StatusCode, reached.Load(), body)
+	}
+	resp, body = get(map[string]string{"Sec-Fetch-Mode": "cors", "Sec-Fetch-Dest": "empty"})
+	if resp.StatusCode != http.StatusBadGateway || strings.Contains(body, "password") || reached.Load() != 1 {
+		t.Fatalf("an Identity Agent's page passed: %d, reached %d, %s", resp.StatusCode, reached.Load(), body)
 	}
 }
 
