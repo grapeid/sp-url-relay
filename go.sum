@@ -1,5 +1,5 @@
-github.com/LF-Decentralized-Trust-labs/identity-bot/identity-agent-core/relayproto v0.0.0-20261021214546-273920724f9a h1:Ui/rw/cOag8/bsnhEx2rlQu/xKcZafX09CXEAAbdBnk=
-github.com/LF-Decentralized-Trust-labs/identity-bot/identity-agent-core/relayproto v0.0.0-20261021214546-273920724f9a/go.mod h1:SyJvK6o5aYufFS56KL5hJBBXjJZSGnjMppgifgazsIw=
+github.com/LF-Decentralized-Trust-labs/identity-bot/identity-agent-core/relayproto v0.0.0-20261021235329-06a1178526b3 h1:wXxQQaVFKDTdFGgoER29Psd2yfXJcJxiO/H0pGGUmUg=
+github.com/LF-Decentralized-Trust-labs/identity-bot/identity-agent-core/relayproto v0.0.0-20261021235329-06a1178526b3/go.mod h1:SyJvK6o5aYufFS56KL5hJBBXjJZSGnjMppgifgazsIw=
 github.com/cenkalti/backoff/v5 v5.0.3 h1:ZN+IMa753KfX5hd8vVaMixjnqRZ3y8CuJKRKj1xcsSM=
 github.com/cenkalti/backoff/v5 v5.0.3/go.mod h1:rkhZdG3JZukswDf7f0cwqPNk4K0sa+F97BxZthm/crw=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1VwoXQT9A3Wy9MM3WgvqSxFWenqJduM=
@@ -20,8 +20,6 @@ github.com/gorilla/websocket v1.5.3 h1:saDtZ6Pbx/0u+bgYQ3q96pZgCzfhKXGPqt7kZ72aN
 github.com/gorilla/websocket v1.5.3/go.mod h1:YR8l580nyteQvAITg2hZ9XVh4b55+EU/adAjf1fMHhE=
 github.com/grapeid/keri-go v0.1.5 h1:/HCHgbQbJ+HP/cHIe0DyxLXMnBC8gK3Z2sz0rseltGA=
 github.com/grapeid/keri-go v0.1.5/go.mod h1:Gypsr09J5eYiw9vpimQrE8nn9UolBOv0HkkrdNynLYg=
-github.com/grapeid/sp-common v0.0.0-20260730212551-2bde114183d8 h1:9DsbRJwVoq5whYZOdHrecJbQ8ddmwasjw3p4DPE0kSk=
-github.com/grapeid/sp-common v0.0.0-20260730212551-2bde114183d8/go.mod h1:L1e0/lYE06zC52CCOHgewoTTwrIab+2bPYvzGWvLmv0=
 github.com/hashicorp/golang-lru/v2 v2.0.7 h1:a+bsQ5rvGLjzHuww6tVxozPZFVghXaHOwFs4luLUK2k=
 github.com/hashicorp/golang-lru/v2 v2.0.7/go.mod h1:QeFd9opnmA6QUJc5vARoKUSoFhyfM2/ZepoAG6RGpeM=
 github.com/hashicorp/yamux v0.1.2 h1:XtB8kyFOyHXYVFnwT5C3+Bdo8gArse7j2AQ0DA0Uey8=

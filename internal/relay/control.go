@@ -1,7 +1,6 @@
 package relay
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
@@ -194,27 +193,11 @@ func currentKey(kel []byte, aid string) (string, error) {
 }
 
 // canonicalControl is the byte string a control request is signed over: the
-// relay protocol's canonical form (ADR-048 §3), keys sorted, no whitespace,
-// no HTML escaping, with "signature" left out.
+// one form every service-provider request is signed in (the Identity Agent's
+// ADR-049), implemented once, by relayproto.CanonicalBody. This relay keeps no
+// copy of its own.
 func canonicalControl(fields map[string]any) ([]byte, error) {
-	m := make(map[string]string, len(fields))
-	for k, v := range fields {
-		if k == "signature" {
-			continue
-		}
-		str, ok := v.(string)
-		if !ok {
-			return nil, fmt.Errorf("every field is a string")
-		}
-		m[k] = str
-	}
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(m); err != nil {
-		return nil, err
-	}
-	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
+	return relayproto.CanonicalBody(fields)
 }
 
 func printableASCII(s string) bool {
