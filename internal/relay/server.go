@@ -310,7 +310,7 @@ func (s *Server) nameOf(host string) string {
 		return ""
 	}
 	name, ok := strings.CutSuffix(host, "."+s.cfg.Apex)
-	if !ok || !validName(name) {
+	if !ok || !relayproto.ValidName(name) {
 		return ""
 	}
 	return name

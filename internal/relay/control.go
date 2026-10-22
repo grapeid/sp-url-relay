@@ -324,8 +324,8 @@ func (s *Server) handleClaimName(w http.ResponseWriter, r *http.Request, c contr
 	}
 	name := c.str("name")
 	switch {
-	case !validName(name):
-		writeError(w, http.StatusBadRequest, "invalid_name", "a name is 3 to 32 lowercase letters, digits and single inner hyphens")
+	case !relayproto.ValidName(name):
+		writeError(w, http.StatusBadRequest, "invalid_name", relayproto.NameRule)
 		return
 	case s.reserved[name]:
 		writeError(w, http.StatusForbidden, "reserved", "that name is reserved")

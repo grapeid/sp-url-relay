@@ -29,14 +29,6 @@ func reservedNames(extra []string) map[string]bool {
 	return m
 }
 
-// A name is 3 to 32 characters of lowercase letters, digits and inner
-// hyphens: something a person can read aloud and type.
-var nameRE = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{1,30})[a-z0-9]$`)
-
-func validName(n string) bool {
-	return nameRE.MatchString(n) && !strings.Contains(n, "--")
-}
-
 // A private label is what relayproto.NewAllocationToken makes: 26 characters
 // of lowercase base32.
 var labelRE = regexp.MustCompile(`^[a-z2-7]{26}$`)
