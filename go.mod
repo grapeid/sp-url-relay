@@ -3,7 +3,7 @@ module github.com/grapeid/sp-url-relay
 go 1.26.9
 
 require (
-	github.com/LF-Decentralized-Trust-labs/identity-bot/identity-agent-core/relayproto v0.0.0-20261022173201-ca0e11b7ddbe
+	github.com/LF-Decentralized-Trust-labs/identity-bot/identity-agent-core/relayproto v0.0.0-20261022173942-f5d7dddbc6dd
 	github.com/go-acme/lego/v4 v4.35.2
 	github.com/gorilla/websocket v1.5.3
 	github.com/grapeid/keri-go v0.1.5
