@@ -4,10 +4,10 @@
 # connection), so whatever runs this image must pass raw TCP to it, never a
 # proxy that terminates TLS. See README.md.
 
-FROM golang:1.26-alpine AS build
+FROM golang:1.26.11-alpine@sha256:ae52b5bc6ed045a9ed26ab03dc19327a802a9cc9aa8b27ed57f5c6b60579b0bb AS build
 RUN apk add --no-cache git ca-certificates
 WORKDIR /src
-ENV CGO_ENABLED=0 GOOS=linux GOTOOLCHAIN=auto
+ENV CGO_ENABLED=0 GOOS=linux GOTOOLCHAIN=local
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .

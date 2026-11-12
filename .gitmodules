@@ -1,0 +1,3 @@
+[submodule "third_party/identity-bot"]
+	path = third_party/identity-bot
+	url = https://github.com/LF-Decentralized-Trust-labs/identity-bot.git
