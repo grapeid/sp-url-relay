@@ -3,17 +3,19 @@ module github.com/grapeid/sp-url-relay
 go 1.26.9
 
 require (
-	github.com/LF-Decentralized-Trust-labs/identity-bot/identity-agent-core/relayproto v0.0.0-20261022185627-ff1980119b7a
+	github.com/LF-Decentralized-Trust-labs/identity-bot/identity-agent-core/relayproto v0.0.0-20261110000208-e15f6ec1b341
 	github.com/go-acme/lego/v4 v4.35.2
 	github.com/gorilla/websocket v1.5.3
-	github.com/grapeid/keri-go v0.1.5
+	github.com/grapeid/keri-go v0.5.1-0.20261108070129-11308439ee52
 	github.com/pires/go-proxyproto v0.16.0
 	golang.org/x/crypto v0.58.0
 	modernc.org/sqlite v1.46.1
 )
 
 require (
+	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
+	github.com/cloudflare/circl v1.6.3 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/google/uuid v1.6.0 // indirect
